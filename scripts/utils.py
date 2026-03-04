@@ -1,4 +1,3 @@
-
 #helper functions that are gonna be used for the scraping pipeline
 
 # This contains utility functions that are gonna be used in:

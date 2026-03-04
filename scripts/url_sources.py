@@ -1,19 +1,3 @@
-"""
-Gets the list of URLs to scrape by the domain categories
-
-Choose the websites that mostly have:
-- Checkout flows
-- Subscription pages
-- Cookie consent banners
-- Cancellation flows
-- Free trial signups
-
-IMPORTANT:
-- Respect robots.txt
-- Adding delays to not overload the servers
-- Some websites can block scraping
-"""
-
 import logging
 logger = logging.getLogger("darksite")
 
