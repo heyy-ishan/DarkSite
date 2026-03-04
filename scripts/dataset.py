@@ -1,12 +1,3 @@
-# dataset.py
-# Phase 3: Dataset — Loads and preprocesses all modalities for training
-#
-# Converts Phase 1 (scraper) + Phase 2 (labeler) outputs into a PyTorch Dataset:
-#   - Screenshots → resized to 224x224 for ViT
-#   - DOM text → tokenized for RoBERTa
-#   - Structural features → numeric vector from metadata
-#   - Labels → binary (has_dark_pattern), multi-label (11 types), severity (4 classes)
-
 import json
 import re
 import logging

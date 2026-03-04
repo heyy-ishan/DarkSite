@@ -1,34 +1,3 @@
-# labeler.py
-# Phase 2: Auto-Labeling Pipeline for Dark Pattern Detection
-#
-# This script reads ALL scraped data from Phase 1 and uses multimodal LLMs
-# to generate structured dark pattern labels.
-#
-# DATA SOURCES USED (from scraper.py output):
-#   - data/raw/screenshots/{page_id}.png     → Full page screenshot (primary visual)
-#   - data/raw/diffs/{page_id}_t1.png        → First snapshot (before wait)
-#   - data/raw/diffs/{page_id}_t2.png        → Second snapshot (after 5s wait)
-#   - data/raw/diffs/{page_id}_t3.png        → Third snapshot (after reload)
-#   - data/raw/dom/{page_id}.html            → Raw HTML for text/structure extraction
-#   - data/raw/metadata/{page_id}.json       → All analysis: extraction, verification,
-#                                               A/B test, interaction, session, diff analysis
-#
-# PROVIDERS:
-#   Primary:  Google Gemini 2.5 Flash (free API, 250 RPD)
-#   Fallback: Ollama + Llama 3.2 Vision (local, unlimited)
-#
-# SETUP:
-#   1. Get free Gemini API key from https://aistudio.google.com
-#   2. pip install google-generativeai Pillow
-#   3. export GEMINI_API_KEY="your-key-here"
-#   4. (Optional) brew install ollama && ollama pull llama3.2-vision
-#
-# USAGE:
-#   python labeler.py                     # Label all unlabeled samples
-#   python labeler.py --provider ollama   # Use only local Ollama
-#   python labeler.py --category travel   # Label only travel category
-#   python labeler.py --dry-run           # Preview without calling API
-
 import json
 import os
 import sys
