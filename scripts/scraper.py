@@ -3,18 +3,23 @@
 
 import asyncio
 import json
-import hashlib
 import re
-import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from playwright.async_api import async_playwright
 from PIL import Image
 import imagehash
-from urllib.parse import urlparse
-import random
 
-from pathlib import Path
+try:
+    from scripts.utils import setup_log, get_page_id, domain_name, load_complete_urls, save_completed_website, valid_url
+except ImportError:
+    from utils import setup_log, get_page_id, domain_name, load_complete_urls, save_completed_website, valid_url
+
+logger = setup_log()
+
+# Alias for backward compatibility within scraper.py
+generate_page_id = get_page_id
+get_domain = domain_name
 
 # ============================================================================
 # CONFIGURATION
@@ -47,7 +52,13 @@ CONFIG = {
     
     # Screenshot settings
     "full_page_screenshot": True, 
-    "screenshot_quality": 80
+    "screenshot_quality": 80,
+    
+    # Screenshot diff thresholds
+    "diff_no_change_threshold": 3,
+    "diff_dynamic_content_min": 5,
+    "diff_dynamic_content_max": 20,
+    "diff_significant_change": 10
 }
 
 # Create directories if not already existing
@@ -195,19 +206,7 @@ COMPILED_PATTERNS = {
 # UTILITY FUNCTIONS
 # ============================================================================
 
-#generate unique ids for pages for saving them 
-#generate 12 digit ids using md5 hash
-def generate_page_id(url):
-    return hashlib.md5(url.encode()).hexdigest()[:12]
 
-#getting the domain from the url
-def get_domain(url):
-    parsed = urlparse(url)
-    return parsed.netloc
-
-#getting the current timestamp during the time of scraping
-def get_timestamp():
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 #matching patterns in the text based on the category
 def match_patterns(text, category):
@@ -246,8 +245,8 @@ USER_PROFILES = [
         "timezone_id": "America/New_York",
         "geolocation": {"latitude": 40.7128, "longitude": -74.0060},
         "cookies": [
-            {"name": "returning_visitor", "value": "true", "domain": ""},
-            {"name": "visit_count", "value": "5", "domain": ""}
+            {"name": "returning_visitor", "value": "true"},
+            {"name": "visit_count", "value": "5"}
         ]
     },
     {
@@ -410,7 +409,6 @@ class DarkPatternScraper:
                              document.querySelector(`label[for="${cb.id}"]`)?.innerText ||
                              cb.parentElement?.innerText || '';
                 
-                const labelLower = label.toLowerCase();
                 const isSuspicious = /(newsletter|marketing|email|subscribe|offers|promotions|partners|terms|agree|consent|opt|notify|updates|news|deals)/i.test(label);
                 
                 result.precheckedBoxes.push({
@@ -437,7 +435,6 @@ class DarkPatternScraper:
                 const styles = window.getComputedStyle(btn);
                 const rect = btn.getBoundingClientRect();
                 
-                const textLower = text.toLowerCase();
                 const isPositive = /(accept|agree|yes|continue|ok|got it|allow|add|buy|subscribe|sign up|submit|confirm|checkout|proceed)/i.test(text);
                 const isNegative = /(decline|reject|no|cancel|skip|later|close|dismiss|not now|no thanks|maybe later)/i.test(text);
                 
@@ -737,17 +734,17 @@ class DarkPatternScraper:
         try:
             return await page.evaluate(extraction_script)
         except Exception as e:
-            print(f"Extraction error: {e}")
+            logger.error(f"Extraction error: {e}")
             return None
 
 
 ################# TEMPORAL VERIFICATION - Detects fake dynamic content #################
     
     async def temporal_verification(self, page, url, visits=3, interval=10):
-        """
-        Visit page multiple times to detect fake urgency/scarcity.
-        Returns analysis of what changed vs what stayed static.
-        """
+
+        # Visit page multiple times to detect fake urgency/scarcity.
+        # Returns analysis of what changed vs what stayed static.
+
         snapshots = []
         
         for i in range(visits):
@@ -816,7 +813,9 @@ class DarkPatternScraper:
         }
     
     def _analyze_temporal_data(self, snapshots):
-        """Analyze snapshots for suspicious patterns."""
+        
+        # Analyze snapshots for suspicious patterns.
+        
         analysis = {
             "stock_suspicious": False,
             "viewers_suspicious": False,
@@ -875,16 +874,16 @@ class DarkPatternScraper:
 
 ################# A/B TEST DETECTION - Detects personalized manipulation #################
     
-    async def ab_test_detection(self, url, num_profiles=3):
-        """
-        Visit page with different user profiles to detect personalization.
-        """
+    async def ab_test_detection(self, url, num_profiles=3, playwright_instance=None):
+        
+        # Visit page with different user profiles to detect personalization.
+        
         results = []
         profiles_to_use = USER_PROFILES[:num_profiles]
         
-        async with async_playwright() as p:
+        async def _run_ab_tests(p):
             for profile in profiles_to_use:
-                browser = await p.webkit.launch(headless=True)
+                browser = await p.chromium.launch(headless=True)
                 
                 context_options = {
                     "user_agent": profile["user_agent"],
@@ -902,10 +901,7 @@ class DarkPatternScraper:
                     cookies_with_domain = []
                     for cookie in profile["cookies"]:
                         cookie_copy = cookie.copy()
-                        # Playwright prefers URL for injection instead of raw domain if url is known
-                        cookie_copy["url"] = url 
-                        if "domain" in cookie_copy:
-                            del cookie_copy["domain"] # Remove empty domains from profile 
+                        cookie_copy["url"] = url
                         cookies_with_domain.append(cookie_copy)
                     await context.add_cookies(cookies_with_domain)
                 
@@ -949,13 +945,20 @@ class DarkPatternScraper:
                     })
                     
                 except Exception as e:
-                    print(f"A/B test error for {profile['name']}: {e}")
+                    logger.error(f"A/B test error for {profile['name']}: {e}")
                     results.append({
                         "profile": profile["name"],
                         "error": str(e)
                     })
                 
                 await browser.close()
+        
+        # Run with provided instance or create a new one
+        if playwright_instance:
+            await _run_ab_tests(playwright_instance)
+        else:
+            async with async_playwright() as p:
+                await _run_ab_tests(p)
         
         # Analyze differences
         analysis = self._analyze_ab_results(results)
@@ -967,7 +970,9 @@ class DarkPatternScraper:
     
     #analysze the differences obtained from AB Testing and one which was original.
     def _analyze_ab_results(self, results):
-        """Analyze A/B test results for personalization."""
+        
+        # Analyze A/B test results for personalization.
+
         analysis = {
             "personalization_detected": False,
             "differences": [],
@@ -1033,9 +1038,9 @@ class DarkPatternScraper:
 
     
     async def interaction_detection(self, page):
-        """
-        Perform interactions to trigger hidden dark patterns.
-        """
+
+        # Perform interactions to trigger hidden dark patterns.
+
         interactions = {
             #different types of hidden dark patterns that might get trigerred from:
             "scroll_triggered": [],
@@ -1083,7 +1088,7 @@ class DarkPatternScraper:
             current_count = len(scroll_modals) if scroll_modals else initial_modals
             if len(exit_modals) > current_count:
                 interactions["exit_intent_triggered"] = exit_modals[current_count:]
-        except:
+        except Exception:
             pass
         
         # 3. IDLE TRIGGER (wait without interaction)
@@ -1152,7 +1157,7 @@ class DarkPatternScraper:
                     }''')
                     
                     interactions["decline_response"] = post_decline
-            except:
+            except Exception:
                 pass
         
         # Analyze interaction results
@@ -1193,6 +1198,7 @@ class DarkPatternScraper:
             stage_data = {
                 "action": action,
                 "timestamp": datetime.now().isoformat(),
+                "success": False,
                 "dark_patterns_found": [],
                 "new_popups": [],
                 "hidden_fees": []
@@ -1203,6 +1209,7 @@ class DarkPatternScraper:
                     # Just extract current state
                     patterns = await self.extract_dark_patterns(page)
                     stage_data["dark_patterns_found"] = self._summarize_patterns(patterns)
+                    stage_data["success"] = True
                 
                 elif action == "add_to_cart":
                     # Try to find and click add to cart
@@ -1218,6 +1225,7 @@ class DarkPatternScraper:
                         return false;
                     }''')
                     
+                    stage_data["success"] = added
                     if added:
                         session_data["friction_analysis"]["positive_action_clicks"] += 1
                         await asyncio.sleep(2)
@@ -1244,6 +1252,7 @@ class DarkPatternScraper:
                         return false;
                     }''')
                     
+                    stage_data["success"] = cart_clicked
                     if cart_clicked:
                         await asyncio.sleep(2)
                         
@@ -1269,6 +1278,7 @@ class DarkPatternScraper:
                         return false;
                     }''')
                     
+                    stage_data["success"] = checkout_clicked
                     if checkout_clicked:
                         session_data["friction_analysis"]["positive_action_clicks"] += 1
                         await asyncio.sleep(2)
@@ -1287,6 +1297,7 @@ class DarkPatternScraper:
                     # Try to leave/close and see what happens
                     await page.evaluate('window.scrollTo(0, 0)')
                     await page.mouse.move(500, 0)
+                    stage_data["success"] = True
                     await asyncio.sleep(2)
                     
                     # Check for exit popups
@@ -1377,7 +1388,7 @@ class DarkPatternScraper:
         
         # Calculate difference
         hash_diff = hash1 - hash2
-        diff_data["hash_difference"] = hash_diff
+        diff_data["hash_difference"] = int(hash_diff)
         
         # Reload and take third screenshot
         await page.reload(wait_until="domcontentloaded")
@@ -1392,16 +1403,22 @@ class DarkPatternScraper:
         diff_data["screenshots"].append(str(screenshot3_path))
         
         # Analyze changes
-        diff_1_2 = hash1 - hash2
-        diff_1_3 = hash1 - hash3
-        diff_2_3 = hash2 - hash3
+        diff_1_2 = int(hash1 - hash2)
+        diff_1_3 = int(hash1 - hash3)
+        diff_2_3 = int(hash2 - hash3)
+        
+        sig = self.config["diff_significant_change"]
+        dyn_min = self.config["diff_dynamic_content_min"]
+        dyn_max = self.config["diff_dynamic_content_max"]
+        static = self.config["diff_no_change_threshold"]
         
         diff_data["analysis"] = {
             "diff_over_time": diff_1_2,
             "diff_after_reload": diff_1_3,
-            "significant_change": diff_1_2 > 10 or diff_1_3 > 10,
-            "possible_dynamic_content": diff_1_2 > 5 and diff_1_2 < 20,
-            "likely_static_page": diff_1_2 < 3 and diff_1_3 < 3
+            "diff_reload_vs_time": diff_2_3,
+            "significant_change": diff_1_2 > sig or diff_1_3 > sig,
+            "possible_dynamic_content": diff_1_2 > dyn_min and diff_1_2 < dyn_max,
+            "likely_static_page": diff_1_2 < static and diff_1_3 < static
         }
         
         # Check for specific element changes
@@ -1531,7 +1548,7 @@ class DarkPatternScraper:
         }
         
         async with async_playwright() as p:
-            browser = await p.webkit.launch(headless=True)
+            browser = await p.chromium.launch(headless=True)
             context = await browser.new_context(
                 viewport={"width": 1920, "height": 1080},
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -1544,48 +1561,48 @@ class DarkPatternScraper:
                 await asyncio.sleep(2)
                 
                 # 1. CORE EXTRACTION (always runs)
-                print(f"  [1/6] Extracting dark patterns...")
+                logger.info(f"  [1/6] Extracting dark patterns...")
                 result["extraction"] = await self.extract_dark_patterns(page)
                 
                 # 2. TEMPORAL VERIFICATION
                 if enable_verification:
-                    print(f"  [2/6] Running temporal verification...")
+                    logger.info(f"  [2/6] Running temporal verification...")
                     try:
                         result["verification"] = await self.temporal_verification(page, url)
                     except Exception as e:
-                        print(f"    [WARN] Temporal verification failed: {e}")
+                        logger.warning(f"    [WARN] Temporal verification failed: {e}")
 
                 # 3. A/B TEST DETECTION
                 if enable_ab_test:
-                    print(f"  [3/6] Running A/B test detection...")
+                    logger.info(f"  [3/6] Running A/B test detection...")
                     try:
-                        result["ab_test"] = await self.ab_test_detection(url)
+                        result["ab_test"] = await self.ab_test_detection(url, playwright_instance=p)
                     except Exception as e:
-                        print(f"    [WARN] A/B test detection failed: {e}")
+                        logger.warning(f"    [WARN] A/B test detection failed: {e}")
 
                 # 4. INTERACTION ANALYSIS
                 if enable_interaction:
-                    print(f"  [4/6] Analyze interactions...")
+                    logger.info(f"  [4/6] Analyze interactions...")
                     try:
                         result["interaction"] = await self.interaction_detection(page)
                     except Exception as e:
-                        print(f"    [WARN] Interaction analysis failed: {e}")
+                        logger.warning(f"    [WARN] Interaction analysis failed: {e}")
                         
                 # 5. SESSION SIMULATION
                 if enable_session:
-                    print(f"  [5/6] Simulating session...")
+                    logger.info(f"  [5/6] Simulating session...")
                     try:
                         result["session"] = await self.session_simulation(page, url)
                     except Exception as e:
-                        print(f"    [WARN] Session simulation failed: {e}")
+                        logger.warning(f"    [WARN] Session simulation failed: {e}")
 
                 # 6. SCREENSHOT DIFF ANALYSIS
                 if enable_diff:
-                    print(f"  [6/6] Analyzing visual changes...")
+                    logger.info(f"  [6/6] Analyzing visual changes...")
                     try:
                         result["screenshot_diff"] = await self.screenshot_diff_analysis(page, url, page_id)
                     except Exception as e:
-                        print(f"    [WARN] Diff analysis failed: {e}")
+                        logger.warning(f"    [WARN] Diff analysis failed: {e}")
             
                 # 7. SAVE EXTRACTED DATA
                 try:
@@ -1609,13 +1626,13 @@ class DarkPatternScraper:
                     with open(meta_path, "w", encoding="utf-8") as f:
                         json.dump(result, f, default=json_serial, indent=2)
 
-                    print(f"  [7/7] Saved scraping artifacts to data/raw/")
+                    logger.info(f"  [7/7] Saved scraping artifacts to data/raw/")
                     
                 except Exception as e:
-                    print(f"    [WARN] Failed to save scraping artifacts: {e}")
+                    logger.warning(f"    [WARN] Failed to save scraping artifacts: {e}")
 
             except Exception as e:
-                print(f"  [ERROR] Scraping failed: {e}")
+                logger.error(f"  [ERROR] Scraping failed: {e}")
                 import traceback
                 traceback.print_exc()
             
@@ -1626,10 +1643,12 @@ class DarkPatternScraper:
 # ============================================================================
 
 async def main():
-    print("Starting scraper...")
+    logger.info("Starting scraper...")
     scraper = DarkPatternScraper()
     
-    # Use URLs from url_sources if available, otherwise default
+    # Load previously scraped URLs to skip them
+    completed_urls = load_complete_urls()
+    
     # Use URLs from url_sources if available, otherwise default
     try:
         try:
@@ -1640,16 +1659,26 @@ async def main():
         urls = [u[0] for u in get_entire_urls()] # Scrape all URLs
     except ImportError:
         urls = ["https://www.example.com"]
-        print("Could not import url_sources, using default URL.")
+        logger.warning("Could not import url_sources, using default URL.")
     
-    for url in urls:
-        print(f"Scraping {url}...")
+    # Filter out already scraped URLs
+    urls_to_scrape = [url for url in urls if url not in completed_urls]
+    skipped = len(urls) - len(urls_to_scrape)
+    if skipped > 0:
+        logger.info(f"Skipping {skipped} already scraped URLs")
+    logger.info(f"URLs remaining to scrape: {len(urls_to_scrape)}/{len(urls)}")
+    
+    for url in urls_to_scrape:
+        if not valid_url(url):
+            logger.warning(f"Skipping invalid URL: {url}")
+            continue
+        logger.info(f"Scraping {url}...")
         try:
             result = await scraper.scrape_url(url)
-            print(f"Completed {url}. Page ID: {result.get('page_id')}")
-            # print("Result preview:", str(result)[:200])
+            logger.info(f"Completed {url}. Page ID: {result.get('page_id')}")
+            save_completed_website(url)
         except Exception as e:
-            print(f"Failed to scrape {url}: {e}")
+            logger.error(f"Failed to scrape {url}: {e}")
             import traceback
             traceback.print_exc()
 

@@ -10,11 +10,15 @@
 
 #importing the required libraries
 import os
-import hashlib
 import logging
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
+
+logger = logging.getLogger("darksite")
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 #code for folder structure
 def directory_setup(base_path = "data/raw"):
@@ -35,13 +39,13 @@ def directory_setup(base_path = "data/raw"):
     #create the path if it does not exist originally:
     for name, path in paths.items():
         path.mkdir(parents = True, exist_ok=True)
-        print(f"Directory ready: {path}")
+        logger.info(f"Directory ready: {path}")
 
     return paths
 
 
 #code for setting up the log files:
-def setup_log(log_file = "logs/scraping.log"):
+def setup_log(log_file = str(Path(__file__).resolve().parent.parent / "data" / "logs" / "scraping.log")):
 
     # Configuring the logging to botht the files and the console
 
@@ -55,22 +59,25 @@ def setup_log(log_file = "logs/scraping.log"):
     Path(log_file).parent.mkdir(parents = True, exist_ok = True)
 
     #defining the logging format:
-    logging.basicConfig(
+    log_format = logging.Formatter('%(asctime)s | %(levelname)s | %(message)s')
 
-        #this captures INFO, WARNING, ERROR, CRITICAL
-        level=logging.INFO,
-        
-        #set the format of the log
-        format='%(asctime)s | %(levelname)s | %(message)s',
-        
-        handlers=[
-            #saves the output to the log folder
-            logging.FileHandler(log_file),
-            #prints the output to the console
-            logging.StreamHandler()
-        ]
-    )
-    return logging.getLogger(__name__)
+    # Create a named logger (avoids basicConfig conflicts with other libraries)
+    named_logger = logging.getLogger("darksite")
+    named_logger.setLevel(logging.INFO)
+
+    # Only add handlers if logger doesn't already have them (prevents duplicates on re-import)
+    if not named_logger.handlers:
+        #saves the output to the log folder
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(log_format)
+        named_logger.addHandler(file_handler)
+
+        #prints the output to the console
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(log_format)
+        named_logger.addHandler(stream_handler)
+
+    return named_logger
 
 
 #code to generate unique ids to each url
@@ -126,7 +133,7 @@ def domain_name(url):
 
 
 #loading the completed URLs from the metadata
-def load_complete_urls(metadata_path = "data/raw/metadata/scraped_urls.txt"):
+def load_complete_urls(metadata_path = str(PROJECT_ROOT / "data" / "raw" / "metadata" / "scraped_urls.txt")):
 
     # Gets the list of already scraped URLs
 
@@ -143,12 +150,12 @@ def load_complete_urls(metadata_path = "data/raw/metadata/scraped_urls.txt"):
     if os.path.exists(metadata_path):
         with open(metadata_path, 'r') as f:
             completed = set(line.strip() for line in f)
-        print(f"Successfully Loaded {len(completed)} previously scraped URLs")
+        logger.info(f"Successfully Loaded {len(completed)} previously scraped URLs")
     
     return completed
 
 #saving the successfully scraped website to the metadata
-def save_completed_website(url,metadata_path = "data/raw/metadata/scraped_urls.txt"):
+def save_completed_website(url, metadata_path = str(PROJECT_ROOT / "data" / "raw" / "metadata" / "scraped_urls.txt")):
     """
     Appends the URL to the metadata
     """
