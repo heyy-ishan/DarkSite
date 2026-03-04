@@ -1,6 +1,6 @@
 # DarkSite: Multi-Modal Dark Pattern Detection on the Web
 
-A research project (targeting CHI/CSCW/WWW) that uses deep learning to catch deceptive UI designs on websites. It combines visual, textual, and structural signals to spot dark patterns like fake urgency timers, hidden fees, confirmshaming, and the rest.
+A project that uses deep learning to catch deceptive UI designs on websites. It combines visual, textual, and structural signals to spot dark patterns like fake urgency timers, hidden fees, confirmshaming, and the rest.
 
 ## Overview
 
