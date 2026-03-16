@@ -18,6 +18,7 @@
 #   3. Set --data-dir and --label-dir to your Drive paths
 #   4. Run this script
 
+import os
 import sys
 import json
 import time
@@ -300,6 +301,7 @@ def train(args):
         num_workers=args.num_workers,
         data_dir=args.data_dir,
         label_dir=args.label_dir,
+        use_yada=not args.no_yada,
     )
 
     if dataset_info["num_train"] == 0:
@@ -381,7 +383,7 @@ def train(args):
         val_loss, val_metrics = validate(model, val_loader, criterion, device)
 
         # Step scheduler
-        scheduler.step(epoch)
+        scheduler.step()
 
         epoch_time = time.time() - epoch_start
 
@@ -434,10 +436,9 @@ def train(args):
             )
 
     # --- Final save ---
-    final_metrics = val_metrics if start_epoch < args.epochs else {}
     save_checkpoint(
         model, optimizer, scheduler, criterion, args.epochs - 1,
-        final_metrics, output_dir / "final_model.pt"
+        val_metrics, output_dir / "final_model.pt"
     )
 
     # Save training log
@@ -492,6 +493,10 @@ def main():
     parser.add_argument("--output-dir", type=str,
                         default=str(PROJECT_ROOT / "models"),
                         help="Where to save model checkpoints")
+
+    # External datasets
+    parser.add_argument("--no-yada", action="store_true",
+                        help="Exclude Yada et al. text dataset")
 
     # Training
     parser.add_argument("--epochs", type=int, default=20, help="Number of epochs")

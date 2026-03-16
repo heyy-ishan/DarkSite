@@ -74,7 +74,8 @@ DARK_PATTERN_TAXONOMY = """
 # ============================================================================
 
 class HTMLTextExtractor(HTMLParser):
-    """Extract visible text from HTML, skipping script/style/hidden content."""
+    
+    #Extract visible text from HTML, skipping script/style/hidden content.
 
     SKIP_TAGS = {"script", "style", "noscript", "svg", "path", "meta", "link", "head"}
 
@@ -107,10 +108,10 @@ class HTMLTextExtractor(HTMLParser):
 
 
 def extract_dom_text(dom_path, max_chars=3000):
-    """
-    Extract visible text from DOM HTML file.
-    Returns a truncated version suitable for the LLM prompt.
-    """
+    
+    #Extract visible text from DOM HTML file.
+    #Returns a truncated version suitable for the LLM prompt.
+    
     try:
         with open(dom_path, "r", encoding="utf-8", errors="ignore") as f:
             html = f.read()
@@ -133,10 +134,10 @@ def extract_dom_text(dom_path, max_chars=3000):
 
 
 def extract_dom_structure(dom_path):
-    """
-    Extract structural signals from DOM that indicate dark patterns.
-    Returns a dict of structural indicators.
-    """
+    
+    #Extract structural signals from DOM that indicate dark patterns.
+    #Returns a dict of structural indicators.
+    
     try:
         with open(dom_path, "r", encoding="utf-8", errors="ignore") as f:
             html = f.read()
@@ -165,13 +166,12 @@ def extract_dom_structure(dom_path):
 # ============================================================================
 
 def collect_sample_data(page_id):
-    """
-    Collect all available data for a page_id from every scraper output directory.
+    
+    #Collect all available data for a page_id from every scraper output directory.
+    #Returns:
+    #    dict with keys: screenshot, diffs, dom_text, dom_structure, metadata
+    #    Each key is None if that data source doesn't exist.
 
-    Returns:
-        dict with keys: screenshot, diffs, dom_text, dom_structure, metadata
-        Each key is None if that data source doesn't exist.
-    """
     data = {
         "page_id": page_id,
         "screenshot_path": None,
@@ -216,10 +216,10 @@ def collect_sample_data(page_id):
 # ============================================================================
 
 def build_prompt(sample_data):
-    """
-    Build the labeling prompt using every data source available.
-    The screenshot images are sent separately — this builds the text portion.
-    """
+    
+    #Build the labeling prompt using every data source available.
+    #The screenshot images are sent separately — this builds the text portion.
+    
     metadata = sample_data.get("metadata") or {}
     url = metadata.get("url", "unknown")
     category = metadata.get("category", "unknown")
@@ -520,10 +520,10 @@ If no dark patterns are found, return has_dark_patterns: false with an empty dar
 
 
 def _repair_json(text):
-    """
-    Attempt to repair truncated JSON from LLM responses.
-    Handles common issues: unclosed strings, arrays, objects.
-    """
+    
+    #Attempt to repair truncated JSON from LLM responses.
+    #Handles common issues: unclosed strings, arrays, objects.
+    
     try:
         # First, try as-is
         return json.loads(text)
@@ -556,8 +556,9 @@ def _repair_json(text):
 # ============================================================================
 
 class GeminiLabeler:
-    """Labels screenshots using Google Gemini 2.5 Flash API."""
-
+    
+    #Labels screenshots using Google Gemini 2.5 Flash API.
+    
     def __init__(self):
         try:
             import google.generativeai as genai
@@ -591,15 +592,15 @@ class GeminiLabeler:
         return True
 
     def label(self, sample_data):
-        """
-        Send all available images + comprehensive prompt to Gemini.
+        
+        #Send all available images + comprehensive prompt to Gemini.
+        
+        #Args:
+        #    sample_data: Dict from collect_sample_data()
 
-        Args:
-            sample_data: Dict from collect_sample_data()
-
-        Returns:
-            dict: Parsed label JSON, or None on failure
-        """
+        #Returns:
+        #    dict: Parsed label JSON, or None on failure
+        
         if not self._check_daily_limit():
             return None
 
@@ -676,8 +677,9 @@ class GeminiLabeler:
 # ============================================================================
 
 class OllamaLabeler:
-    """Labels screenshots using local Ollama + Llama 3.2 Vision."""
-
+    
+    #Labels screenshots using local Ollama + Llama 3.2 Vision.
+    
     def __init__(self):
         import urllib.request
         try:
@@ -700,11 +702,11 @@ class OllamaLabeler:
         logger.info(f"Ollama initialized (model: {OLLAMA_CONFIG['model']})")
 
     def label(self, sample_data):
-        """
-        Send screenshot + prompt to local Ollama.
-        Note: Ollama only supports a single image, so we send the main screenshot
-        and include diff analysis from metadata in the text prompt.
-        """
+        
+        #Send screenshot + prompt to local Ollama.
+        #Note: Ollama only supports a single image, so we send the main screenshot
+        #and include diff analysis from metadata in the text prompt.
+        
         import urllib.request
 
         prompt = build_prompt(sample_data)
@@ -763,14 +765,26 @@ class OllamaLabeler:
 # ============================================================================
 
 class LabelingPipeline:
-    """
-    Orchestrates the full labeling process:
-    1. Scans all scraper output directories for samples
-    2. Collects ALL data per sample (screenshots, diffs, DOM, metadata)
-    3. Labels using Gemini (primary) or Ollama (fallback)
-    4. Saves labels to data/labeled/
-    5. Tracks progress for resume
-    """
+    
+    #does the full labeling process:
+    #1. Scans all scraper output directories for samples
+    #2. Collects ALL data per sample (screenshots, diffs, DOM, metadata)
+    #3. Labels using Gemini (primary) or Ollama (fallback)
+    #4. Saves labels to data/labeled/
+    #5. Tracks progress for resume
+    
+    def __init__(self, provider="gemini", fallback=True):
+        self.primary = None
+        self.fallback_provider = None
+
+        if provider == "gemini":
+            try:
+                self.primary = GeminiLabeler()
+            except (ImportError, ValueError, RuntimeError) as e:
+                logger.error(f"Gemini init failed: {e}")
+                if fallback:
+                    logger.info("Falling back to Ollama...")
+                    provider = "ollama"
 
     def __init__(self, provider="gemini", fallback=True):
         self.primary = None
@@ -806,7 +820,9 @@ class LabelingPipeline:
         }
 
     def get_sample_ids(self, category_filter=None):
-        """Get all page_ids that have at least a metadata JSON and a screenshot."""
+        
+        #Get all page_ids that have at least a metadata JSON and a screenshot.
+        
         ids = []
         for meta_file in sorted(PATHS["metadata"].glob("*.json")):
             page_id = meta_file.stem
@@ -833,7 +849,9 @@ class LabelingPipeline:
         return labeled
 
     def label_sample(self, sample_data):
-        """Try primary, fall back if needed."""
+        
+        #Try primary, fall back if needed.
+        
         label = self.primary.label(sample_data)
         if label:
             name = "gemini" if isinstance(self.primary, GeminiLabeler) else "ollama"
@@ -848,7 +866,9 @@ class LabelingPipeline:
         return None, None
 
     def save_label(self, sample_data, label, provider_name):
-        """Save label with full context."""
+        
+        #Save label with full context.
+        
         metadata = sample_data.get("metadata") or {}
         page_id = sample_data["page_id"]
 
@@ -914,7 +934,9 @@ class LabelingPipeline:
             json.dump(self.stats, f, indent=2)
 
     def run(self, category_filter=None, dry_run=False, limit=None):
-        """Main labeling loop."""
+        
+        #Main labeling loop.
+        
         all_ids = self.get_sample_ids(category_filter)
         labeled_ids = self.get_labeled_ids()
         unlabeled_ids = [pid for pid in all_ids if pid not in labeled_ids]

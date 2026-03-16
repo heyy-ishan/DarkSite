@@ -98,7 +98,21 @@ DARK_PATTERNS = {
         r"\d+ seats? left",
         r"\d+ tickets? left",
         r"booked \d+ times",
-        r"likely to sell out"
+        r"likely to sell out",
+        r"only \d+ (units?|pieces?|spots?|slots?) (available|remaining)",
+        r"\d+ (units?|pieces?) sold (today|this week|recently)",
+        r"get (it|yours?) before (it'?s )?gone",
+        r"demand(ing)? (is )?(high|exceeds supply)",
+        r"back(order|ordered)",
+        r"waitlist",
+        r"notify me when (available|back in stock)",
+        r"sold out( soon)?",
+        r"pre-?order (now|today)",
+        r"limited (edition|release|run)",
+        r"members?[-\s]only",
+        r"invite[-\s]only",
+        r"application (required|based)",
+        r"\d+ (spots?|openings?|slots?) remaining"
     ],
 
     #creating a false sense of urgency
@@ -122,7 +136,20 @@ DARK_PATTERNS = {
         r"seconds? left",
         r"time is running out",
         r"clock is ticking",
-        r"order within"
+        r"order within",
+        r"price (increases?|goes up) (at|in|after)",
+        r"price change(s)? (soon|tomorrow|at midnight)",
+        r"midnight (deadline|sale|offer)",
+        r"hurry,? (only|just)",
+        r"don'?t wait",
+        r"respond (by|before|within)",
+        r"reply (by|before|within)",
+        r"(checkout|purchase|buy) (within|before)",
+        r"ship(s|ping)? (today|same day) if (you )?order (by|within|now)",
+        r"last (day|hour|minute|chance) (to |for )?(get|claim|order|buy)",
+        r"countdown",
+        r"expire[sd]? (at|on|by)",
+        r"(price|offer|deal) valid (until|through|till)"
     ],
     
     #creating false social proof
@@ -140,7 +167,19 @@ DARK_PATTERNS = {
         r"\d+(\.\d+)? out of \d+ stars?",
         r"verified (purchase|buyer|review)",
         r"someone (just )?(bought|purchased)",
-        r"recently (bought|purchased|viewed)"
+        r"recently (bought|purchased|viewed)",
+        r"\d+(k|\,\d+)?\+? (happy )?(customers|users|members|subscribers)",
+        r"(award|editor|expert)[-\s](winning|recommended|approved|choice|pick)",
+        r"featured (in|on|by)",
+        r"as (recommended|featured|seen|heard) (in|on|by)",
+        r"(celebrity|influencer|expert) (approved|recommended|endorsed|used)",
+        r"#\d+ (best ?seller|rated|ranked)",
+        r"\d+ (five|5)[-\s]star (reviews?|ratings?)",
+        r"loved by (millions?|thousands?|\d+)",
+        r"(over|more than) \d+(,\d+)?\+? (reviews?|ratings?|customers)",
+        r"(staff|editors?|experts?) (pick|choice|recommended|favorite)",
+        r"community (favorite|choice|recommended)",
+        r"(top|highest)[-\s]rated"
     ],
     
     #making the user feel guilty for not taking an action
@@ -156,7 +195,17 @@ DARK_PATTERNS = {
         r"i'?ll pass on",
         r"not for me",
         r"maybe later",
-        r"remind me never"
+        r"remind me never",
+        r"no,? i (don'?t|do not) (want|need|care about) (protection|security|coverage|warranty)",
+        r"i'?m (ok|okay|fine) (with|paying) (full price|more|risk)",
+        r"no (thanks?|thank you),? i (enjoy|like|prefer) (paying more|missing out|being left out)",
+        r"i (give up|surrender|accept defeat)",
+        r"(skip|ignore|dismiss) (this|the) (offer|deal|protection|upgrade)",
+        r"leave (me|this page) without",
+        r"i'?ll (take my chances|risk it|go without)",
+        r"no,? keep (charging|billing) me (more|full price)",
+        r"i (don'?t|do not) (want|need) to (save|protect|secure)",
+        r"decline (the )?(offer|protection|upgrade|deal)"
     ],
     
     #drawing attention away from important information
@@ -168,7 +217,21 @@ DARK_PATTERNS = {
         r"personalized",
         r"upgrade",
         r"premium",
-        r"pro version"
+        r"pro version",
+        r"(our |we )?(recommend|suggest|picked) (this|for you)",
+        r"specially (selected|curated|chosen) for you",
+        r"you (may|might|will) also (like|love|enjoy|need)",
+        r"complete (your |the )?(look|set|bundle|order)",
+        r"frequently bought together",
+        r"customers also (bought|viewed|searched)",
+        r"don'?t forget (to add|your)",
+        r"add([-\s]on|[-\s]ons?|ed) (protection|warranty|coverage|insurance)",
+        r"(enhance|protect|extend) your (purchase|order|experience)",
+        r"while (you'?re|you are) at it",
+        r"(sponsored|advertisement|ad)\b",
+        r"partner (content|offer|deal)",
+        r"(most|best) (value|savings?)",
+        r"(highlighted|featured|promoted) (offer|product|choice)"
     ],
     
     #adding hidden costs
@@ -181,7 +244,20 @@ DARK_PATTERNS = {
         r"admin(istration)? fee",
         r"taxes? (and|&) fees?",
         r"additional charges?",
-        r"extra charges?"
+        r"extra charges?",
+        r"resort fee",
+        r"destination fee",
+        r"(mandatory|required) (gratuity|tip|surcharge)",
+        r"fuel (surcharge|levy)",
+        r"delivery (surcharge|fee)",
+        r"(small |low )?order (fee|surcharge)",
+        r"(platform|technology|regulatory) fee",
+        r"(total )?price (may vary|excludes? (taxes?|fees?))",
+        r"\+ (taxes?|fees?|charges?|surcharges?)",
+        r"(excl\.|excluding|does not include) (tax|vat|gst|fees?)",
+        r"(plus|\\+) (applicable )?tax(es)?",
+        r"before (tax|fees?|charges?)",
+        r"(see|view|read) (full |complete )?(pricing|fee) (details?|schedule|breakdown)"
     ],
     
     #forcing the user to take an action
@@ -191,7 +267,18 @@ DARK_PATTERNS = {
         r"register to",
         r"login required",
         r"subscribe to continue",
-        r"enter email to"
+        r"enter email to",
+        r"(you )?must (log ?in|sign ?in|register|create an account)",
+        r"(account|membership) (required|needed) to (continue|proceed|access|view)",
+        r"(log ?in|sign ?in) (to |with )?(continue|see|access|view|unlock)",
+        r"(verify|confirm) (your )?(email|phone|identity) to (continue|proceed|access)",
+        r"(connect|link) (your )?(account|card|bank) to (continue|proceed)",
+        r"(enable|allow|turn on) (notifications?|location|access) to (continue|use|get)",
+        r"(accept|agree to) (the )?(terms?|conditions?|policy|cookies?) to (continue|proceed)",
+        r"(phone|mobile) number required",
+        r"(download|install) (the |our )?(app|application) to (continue|access|view)",
+        r"only available (in|through|via) (the |our )?(app|mobile app)",
+        r"(share|invite) (friends?|contacts?) to (unlock|access|continue|get)"
     ]
 }
 

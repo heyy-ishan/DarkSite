@@ -9,11 +9,10 @@ from transformers import ViTModel, RobertaModel
 # ============================================================================
 
 class StructuralBranch(nn.Module):
-    """
-    Processes the 25 hand-crafted structural features from scraper metadata.
-    Projects them to the same 768-dim space as ViT and RoBERTa for fusion.
-    """
-
+    
+    #Processes the 25 hand-crafted structural features from scraper metadata.
+    #Projects them to the same 768-dim space as ViT and RoBERTa for fusion.
+    
     def __init__(self, input_dim=25, hidden_dim=256, output_dim=768, dropout=0.3):
         super().__init__()
         self.network = nn.Sequential(
@@ -44,12 +43,11 @@ class StructuralBranch(nn.Module):
 # ============================================================================
 
 class CrossModalAttention(nn.Module):
-    """
-    Fuses the three modality feature vectors using multi-head attention.
-
-    The three modality embeddings are treated as a sequence of 3 tokens.
-    Self-attention learns which modalities to attend to for each prediction.
-    """
+    
+    #Fuses the three modality feature vectors using multi-head attention.
+    
+    #The three modality embeddings are treated as a sequence of 3 tokens.
+    #Self-attention learns which modalities to attend to for each prediction.
 
     def __init__(self, embed_dim=768, num_heads=8, dropout=0.1):
         super().__init__()
@@ -78,15 +76,15 @@ class CrossModalAttention(nn.Module):
         )
 
     def forward(self, visual_feat, text_feat, structural_feat):
-        """
-        Args:
-            visual_feat: Tensor [batch, 768]
-            text_feat: Tensor [batch, 768]
-            structural_feat: Tensor [batch, 768]
-
-        Returns:
-            Tensor [batch, 768] — fused representation
-        """
+        
+        #Args:
+        #    visual_feat: Tensor [batch, 768]
+        #    text_feat: Tensor [batch, 768]
+        #    structural_feat: Tensor [batch, 768]
+        
+        #Returns:
+        #    Tensor [batch, 768] — fused representation
+        
         batch_size = visual_feat.size(0)
 
         # Stack into sequence: [batch, 3, 768]
@@ -112,12 +110,12 @@ class CrossModalAttention(nn.Module):
 # ============================================================================
 
 class ClassificationHeads(nn.Module):
-    """
-    Three prediction heads on top of the fused representation:
-    1. Binary: has_dark_patterns (yes/no) — sigmoid
-    2. Multi-label: 11 dark pattern types — independent sigmoids
-    3. Severity: none/low/medium/high — softmax
-    """
+    
+    #Three prediction heads on top of the fused representation:
+    #1. Binary: has_dark_patterns (yes/no) — sigmoid
+    #2. Multi-label: 11 dark pattern types — independent sigmoids
+    #3. Severity: none/low/medium/high — softmax
+    
 
     def __init__(self, input_dim=768, num_types=11, num_severity=4, dropout=0.2):
         super().__init__()
@@ -155,15 +153,16 @@ class ClassificationHeads(nn.Module):
         )
 
     def forward(self, fused):
-        """
-        Args:
-            fused: Tensor [batch, 768]
 
-        Returns:
-            binary_logits: Tensor [batch, 1]
-            type_logits: Tensor [batch, 11]
-            severity_logits: Tensor [batch, 4]
-        """
+        # Args:
+        #     fused: Tensor [batch, 768]
+
+        # Returns:
+        #     binary_logits: Tensor [batch, 1]
+        #     type_logits: Tensor [batch, 11]
+        #     severity_logits: Tensor [batch, 4]
+
+
         shared = self.shared(fused)
 
         binary_logits = self.binary_head(shared)
@@ -178,13 +177,12 @@ class ClassificationHeads(nn.Module):
 # ============================================================================
 
 class DarkPatternDetector(nn.Module):
-    
-    """
-    Multi-modal dark pattern detection model.
 
-    Combines ViT (visual), RoBERTa (text), and MLP (structural) branches
-    with cross-modal attention fusion and multi-task prediction heads.
-    """
+    # Multi-modal dark pattern detection model.
+
+    # Combines ViT (visual), RoBERTa (text), and MLP (structural) branches
+    # with cross-modal attention fusion and multi-task prediction heads.
+
 
     def __init__(
         self,
@@ -257,22 +255,21 @@ class DarkPatternDetector(nn.Module):
 
     def forward(self, image, input_ids, attention_mask, structural):
        
-        """
-        Forward pass through all branches, fusion, and prediction heads.
 
-        Args:
-            image: Tensor [batch, 3, 224, 224]
-            input_ids: Tensor [batch, max_len]
-            attention_mask: Tensor [batch, max_len]
-            structural: Tensor [batch, 25]
+        # Forward pass through all branches, fusion, and prediction heads.
 
-        Returns:
-            dict with:
-                binary_logits: Tensor [batch, 1]
-                type_logits: Tensor [batch, 11]
-                severity_logits: Tensor [batch, 4]
-                attention_weights: Tensor [batch, num_heads, 3, 3]
-        """
+        # Args:
+        #     image: Tensor [batch, 3, 224, 224]
+        #     input_ids: Tensor [batch, max_len]
+        #     attention_mask: Tensor [batch, max_len]
+        #     structural: Tensor [batch, 25]
+
+        # Returns:
+        #     dict with:
+        #         binary_logits: Tensor [batch, 1]
+        #         type_logits: Tensor [batch, 11]
+        #         severity_logits: Tensor [batch, 4]
+        #         attention_weights: Tensor [batch, num_heads, 3, 3]
        
         # --- Branch 1: Visual (ViT) ---
         # ViT outputs: last_hidden_state [batch, num_patches+1, 768]
@@ -303,7 +300,7 @@ class DarkPatternDetector(nn.Module):
         }
 
     def get_trainable_params(self):
-        """Count trainable vs frozen parameters."""
+        # Count trainable vs frozen parameters.
         trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
         total = sum(p.numel() for p in self.parameters())
         frozen = total - trainable
@@ -315,10 +312,9 @@ class DarkPatternDetector(nn.Module):
         }
 
     def get_param_groups(self, lr_backbone=1e-5, lr_new=1e-4):
-        """
-        Get parameter groups with different learning rates.
-        Pre-trained layers get a lower LR, new layers get a higher LR.
-        """
+        # Get parameter groups with different learning rates.
+        # Pre-trained layers get a lower LR, new layers get a higher LR.
+        
         backbone_params = []
         new_params = []
 
@@ -341,13 +337,12 @@ class DarkPatternDetector(nn.Module):
 # ============================================================================
 
 class MultiTaskLoss(nn.Module):
-    """
-    Combined loss for three tasks with learnable task weights.
-
-    Uses uncertainty-based weighting (Kendall et al., 2018) to automatically
-    balance the three losses during training.
-    """
-
+    
+    #Combined loss for three tasks with learnable task weights.
+    
+    #Uses uncertainty-based weighting (Kendall et al., 2018) to automatically
+    #balance the three losses during training.
+    
     def __init__(self):
         super().__init__()
         # Learnable log-variance parameters for each task
@@ -358,20 +353,20 @@ class MultiTaskLoss(nn.Module):
 
     def forward(self, binary_logits, type_logits, severity_logits,
                 binary_labels, type_labels, severity_labels):
-        """
-        Compute weighted multi-task loss.
 
-        Args:
-            binary_logits: [batch, 1]
-            type_logits: [batch, 11]
-            severity_logits: [batch, 4]
-            binary_labels: [batch, 1]
-            type_labels: [batch, 11]
-            severity_labels: [batch, 1]
+        # Compute weighted multi-task loss.
 
-        Returns:
-            total_loss, loss_dict
-        """
+        # Args:
+        #     binary_logits: [batch, 1]
+        #     type_logits: [batch, 11]
+        #     severity_logits: [batch, 4]
+        #     binary_labels: [batch, 1]
+        #     type_labels: [batch, 11]
+        #     severity_labels: [batch, 1]
+
+        # Returns:
+        #     total_loss, loss_dict
+
         # Binary classification loss
         loss_binary = F.binary_cross_entropy_with_logits(binary_logits, binary_labels)
 
