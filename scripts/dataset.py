@@ -16,10 +16,8 @@
 
 import csv
 import json
-import re
 import logging
 from pathlib import Path
-from html.parser import HTMLParser
 
 import torch
 from torch.utils.data import Dataset, DataLoader, ConcatDataset
@@ -29,6 +27,11 @@ from PIL import Image
 logger = logging.getLogger("darksite")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+try:
+    from scripts.utils import extract_html_text
+except ImportError:
+    from utils import extract_html_text
 
 
 # ============================================================================
@@ -55,7 +58,7 @@ SEVERITY_LEVELS = ["none", "low", "medium", "high"]
 NUM_SEVERITY = len(SEVERITY_LEVELS)
 SEVERITY_TO_IDX = {s: i for i, s in enumerate(SEVERITY_LEVELS)}
 
-NUM_STRUCTURAL_FEATURES = 25
+NUM_STRUCTURAL_FEATURES = 24
 
 IMAGE_TRANSFORM = transforms.Compose([
     transforms.Resize((224, 224)),
@@ -96,47 +99,6 @@ DARK_PATTERN_TYPE_MAP = {
 }
 
 
-# ============================================================================
-# HTML TEXT EXTRACTOR
-# ============================================================================
-
-class HTMLTextExtractor(HTMLParser):
-    SKIP_TAGS = {"script", "style", "noscript", "svg", "path", "meta", "link", "head"}
-
-    def __init__(self):
-        super().__init__()
-        self.text_parts = []
-        self._skip_depth = 0
-
-    def handle_starttag(self, tag, attrs):
-        if tag.lower() in self.SKIP_TAGS:
-            self._skip_depth += 1
-
-    def handle_endtag(self, tag):
-        if tag.lower() in self.SKIP_TAGS:
-            self._skip_depth = max(0, self._skip_depth - 1)
-
-    def handle_data(self, data):
-        if self._skip_depth == 0:
-            text = data.strip()
-            if text:
-                self.text_parts.append(text)
-
-    def get_text(self):
-        return " ".join(self.text_parts)
-
-
-def extract_text_from_html(html_path, max_chars=5000):
-    try:
-        with open(html_path, "r", encoding="utf-8", errors="ignore") as f:
-            html = f.read()
-        extractor = HTMLTextExtractor()
-        extractor.feed(html)
-        text = extractor.get_text()
-        text = re.sub(r"\s+", " ", text).strip()
-        return text[:max_chars]
-    except Exception:
-        return ""
 
 
 # ============================================================================
@@ -144,7 +106,7 @@ def extract_text_from_html(html_path, max_chars=5000):
 # ============================================================================
 
 def extract_structural_features(metadata):
-    """Extract 25-dim feature vector from scraper metadata."""
+    """Extract 24-dim feature vector from scraper metadata."""
     features = []
     ext = metadata.get("extraction", {}) or {}
 
@@ -290,7 +252,7 @@ class OwnScrapedDataset(Dataset):
         # Text from DOM
         text = ""
         if s["dom"].exists():
-            text = extract_text_from_html(s["dom"])
+            text = extract_html_text(s["dom"])
         if not text:
             text = "No page text available."
 
@@ -309,8 +271,8 @@ class OwnScrapedDataset(Dataset):
             try:
                 with open(s["metadata"]) as f:
                     metadata = json.load(f)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to load metadata for {s['page_id']}: {e}")
         structural = torch.tensor(extract_structural_features(metadata), dtype=torch.float32)
 
         # Labels
@@ -465,7 +427,8 @@ class CombinedDarkPatternDataset(Dataset):
 
         if not datasets:
             logger.error("No datasets found! Check your data directories.")
-            self.samples_list = []
+            self.indices = []
+            self.combined = None
             return
 
         # Combine all
@@ -473,9 +436,9 @@ class CombinedDarkPatternDataset(Dataset):
         total = len(combined)
         logger.info(f"  Combined total: {total} samples")
 
-        # Split
-        torch.manual_seed(seed)
-        indices = torch.randperm(total).tolist()
+        # Split (use local Generator to avoid resetting global RNG)
+        g = torch.Generator().manual_seed(seed)
+        indices = torch.randperm(total, generator=g).tolist()
         n_train = int(total * split_ratio)
 
         if split == "train":

@@ -10,10 +10,10 @@ from transformers import ViTModel, RobertaModel
 
 class StructuralBranch(nn.Module):
     
-    #Processes the 25 hand-crafted structural features from scraper metadata.
+    #Processes the 24 hand-crafted structural features from scraper metadata.
     #Projects them to the same 768-dim space as ViT and RoBERTa for fusion.
     
-    def __init__(self, input_dim=25, hidden_dim=256, output_dim=768, dropout=0.3):
+    def __init__(self, input_dim=24, hidden_dim=256, output_dim=768, dropout=0.3):
         super().__init__()
         self.network = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
@@ -31,7 +31,7 @@ class StructuralBranch(nn.Module):
     def forward(self, x):
         """
         Args:
-            x: Tensor [batch, 25]
+            x: Tensor [batch, 24]
         Returns:
             Tensor [batch, 768]
         """
@@ -188,7 +188,7 @@ class DarkPatternDetector(nn.Module):
         self,
         vit_model_name="google/vit-base-patch16-224",
         roberta_model_name="roberta-base",
-        num_structural_features=25,
+        num_structural_features=24,
         num_types=11,
         num_severity=4,
         embed_dim=768,
@@ -262,7 +262,7 @@ class DarkPatternDetector(nn.Module):
         #     image: Tensor [batch, 3, 224, 224]
         #     input_ids: Tensor [batch, max_len]
         #     attention_mask: Tensor [batch, max_len]
-        #     structural: Tensor [batch, 25]
+        #     structural: Tensor [batch, 24]
 
         # Returns:
         #     dict with:

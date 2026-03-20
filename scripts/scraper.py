@@ -3,7 +3,6 @@
 
 import asyncio
 import json
-import re
 from datetime import datetime
 from pathlib import Path
 from playwright.async_api import async_playwright
@@ -281,29 +280,6 @@ DARK_PATTERNS = {
         r"(share|invite) (friends?|contacts?) to (unlock|access|continue|get)"
     ]
 }
-
-# Compile patterns for efficiency
-COMPILED_PATTERNS = {
-    category: [re.compile(pattern, re.IGNORECASE) for pattern in patterns]
-    for category, patterns in DARK_PATTERNS.items()
-}
-
-
-# ============================================================================
-# UTILITY FUNCTIONS
-# ============================================================================
-
-
-
-#matching patterns in the text based on the category
-def match_patterns(text, category):
-    matches = []
-    for pattern in COMPILED_PATTERNS.get(category, []):
-        found = pattern.findall(text)
-        if found:
-            matches.extend(found)
-    return matches
-
 
 # ============================================================================
 # USER PROFILES FOR A/B TESTING
@@ -893,11 +869,23 @@ class DarkPatternScraper:
         
         # Analyze temporal consistency
         analysis = self._analyze_temporal_data(snapshots)
-        
-        return {
+
+        result = {
             "snapshots": snapshots,
             "analysis": analysis
         }
+
+        # Save temporal data to disk
+        try:
+            page_id = generate_page_id(url)
+            temporal_path = Path(self.config["temporal_dir"]) / f"{page_id}.json"
+            with open(temporal_path, "w", encoding="utf-8") as f:
+                json.dump(result, f, indent=2)
+            logger.info(f"    Temporal data saved: {temporal_path.name}")
+        except Exception as e:
+            logger.warning(f"    [WARN] Could not save temporal data: {e}")
+
+        return result
     
     def _analyze_temporal_data(self, snapshots):
         
@@ -1415,8 +1403,18 @@ class DarkPatternScraper:
             "has_upsell_pressure": any(stage.get("upsells", {}).get("hasUpsell", False) for stage in session_data["stages"])
         }
         
+        # Save session data to disk
+        try:
+            page_id = generate_page_id(url)
+            session_path = Path(self.config["session_dir"]) / f"{page_id}.json"
+            with open(session_path, "w", encoding="utf-8") as f:
+                json.dump(session_data, f, indent=2)
+            logger.info(f"    Session data saved: {session_path.name}")
+        except Exception as e:
+            logger.warning(f"    [WARN] Could not save session data: {e}")
+
         return session_data
-    
+
     def _summarize_patterns(self, patterns):
         
         # Summarize extracted patterns.
@@ -1425,17 +1423,24 @@ class DarkPatternScraper:
             return []
         
         summary = []
-        if patterns.get("scarcity"):
-            summary.append(f"Scarcity: {len(patterns['scarcity'])} instances")
-        if patterns.get("urgency"):
-            summary.append(f"Urgency: {len(patterns['urgency'])} instances")
-        if patterns.get("socialProof"):
-            summary.append(f"Social proof: {len(patterns['socialProof'])} instances")
-        if patterns.get("precheckedBoxes"):
-            summary.append(f"Pre-checked boxes: {len(patterns['precheckedBoxes'])}")
-        if patterns.get("modals"):
-            summary.append(f"Modals/popups: {len(patterns['modals'])}")
-        
+        pattern_labels = {
+            "scarcity": "Scarcity",
+            "urgency": "Urgency",
+            "socialProof": "Social proof",
+            "confirmshaming": "Confirmshaming",
+            "hiddenCosts": "Hidden costs",
+            "misdirection": "Misdirection",
+            "forcedAction": "Forced action",
+            "precheckedBoxes": "Pre-checked boxes",
+            "modals": "Modals/popups",
+            "cookieBanners": "Cookie banners",
+            "hiddenElements": "Hidden elements",
+        }
+        for key, label in pattern_labels.items():
+            items = patterns.get(key)
+            if items:
+                summary.append(f"{label}: {len(items)} instances")
+
         return summary
 
     # ========================================================================
@@ -1537,29 +1542,35 @@ class DarkPatternScraper:
         
         if not buttons:
             return analysis
-        
+
+        def parse_css_float(value, default=14.0):
+            try:
+                return float(''.join(c for c in str(value) if c.isdigit() or c == '.') or default)
+            except (ValueError, TypeError):
+                return default
+
         positive_buttons = [b for b in buttons if b.get("isPositive")]
         negative_buttons = [b for b in buttons if b.get("isNegative")]
-        
+
         for pos in positive_buttons:
             for neg in negative_buttons:
                 pos_area = pos.get("area", 0)
                 neg_area = neg.get("area", 1)
-                
+
                 if neg_area > 0:
                     area_ratio = pos_area / neg_area
                 else:
                     area_ratio = float('inf')
-                
-                pos_font = float(pos.get("styles", {}).get("fontSize", "14px").replace("px", ""))
-                neg_font = float(neg.get("styles", {}).get("fontSize", "14px").replace("px", ""))
-                
+
+                pos_font = parse_css_float(pos.get("styles", {}).get("fontSize", "14px"))
+                neg_font = parse_css_float(neg.get("styles", {}).get("fontSize", "14px"))
+
                 if neg_font > 0:
                     font_ratio = pos_font / neg_font
                 else:
                     font_ratio = float('inf')
-                
-                neg_opacity = float(neg.get("styles", {}).get("opacity", "1"))
+
+                neg_opacity = parse_css_float(neg.get("styles", {}).get("opacity", "1"), default=1.0)
                 
                 # Check for asymmetry
                 is_asymmetric = (
@@ -1581,8 +1592,8 @@ class DarkPatternScraper:
         
         # Check for hidden negative options
         for neg in negative_buttons:
-            neg_opacity = float(neg.get("styles", {}).get("opacity", "1"))
-            neg_font = float(neg.get("styles", {}).get("fontSize", "14px").replace("px", ""))
+            neg_opacity = parse_css_float(neg.get("styles", {}).get("opacity", "1"), default=1.0)
+            neg_font = parse_css_float(neg.get("styles", {}).get("fontSize", "14px"))
             neg_area = neg.get("area", 0)
             
             if neg_opacity < 0.6 or neg_font < 11 or neg_area < 1500:
@@ -1703,15 +1714,16 @@ class DarkPatternScraper:
                     with open(dom_path, "w", encoding="utf-8") as f:
                         f.write(dom_content)
                     
-                    # Save Metadata
+                    # Save Metadata (excluding verification/session — saved to their own folders)
                     meta_path = Path(self.config["metadata_dir"]) / f"{page_id}.json"
-                    
+
                     # Convert unserializable objects (like numpy types or hash objects) to string if present
                     def json_serial(obj):
                         return str(obj)
 
+                    meta_result = {k: v for k, v in result.items() if k not in ("verification", "session")}
                     with open(meta_path, "w", encoding="utf-8") as f:
-                        json.dump(result, f, default=json_serial, indent=2)
+                        json.dump(meta_result, f, default=json_serial, indent=2)
 
                     logger.info(f"  [7/7] Saved scraping artifacts to data/raw/")
                     
@@ -1722,7 +1734,11 @@ class DarkPatternScraper:
                 logger.error(f"  [ERROR] Scraping failed: {e}")
                 import traceback
                 traceback.print_exc()
-            
+            finally:
+                await page.close()
+                await context.close()
+                await browser.close()
+
             return result
 
 # ============================================================================
@@ -1743,25 +1759,25 @@ async def main():
         except ImportError:
             from url_sources import get_entire_urls
             
-        urls = [u[0] for u in get_entire_urls()] # Scrape all URLs
+        url_list = get_entire_urls()  # list of (url, category) tuples
     except ImportError:
-        urls = ["https://www.example.com"]
+        url_list = [("https://www.example.com", "general")]
         logger.warning("Could not import url_sources, using default URL.")
-    
+
     # Filter out already scraped URLs
-    urls_to_scrape = [url for url in urls if url not in completed_urls]
-    skipped = len(urls) - len(urls_to_scrape)
+    urls_to_scrape = [(url, cat) for url, cat in url_list if url not in completed_urls]
+    skipped = len(url_list) - len(urls_to_scrape)
     if skipped > 0:
         logger.info(f"Skipping {skipped} already scraped URLs")
-    logger.info(f"URLs remaining to scrape: {len(urls_to_scrape)}/{len(urls)}")
-    
-    for url in urls_to_scrape:
+    logger.info(f"URLs remaining to scrape: {len(urls_to_scrape)}/{len(url_list)}")
+
+    for url, category in urls_to_scrape:
         if not valid_url(url):
             logger.warning(f"Skipping invalid URL: {url}")
             continue
         logger.info(f"Scraping {url}...")
         try:
-            result = await scraper.scrape_url(url)
+            result = await scraper.scrape_url(url, category=category)
             logger.info(f"Completed {url}. Page ID: {result.get('page_id')}")
             save_completed_website(url)
         except Exception as e:

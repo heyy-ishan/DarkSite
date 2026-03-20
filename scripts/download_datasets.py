@@ -9,8 +9,6 @@
 # OUTPUT:
 #   data/external/yada/dataset.tsv
 
-import os
-import sys
 import json
 import argparse
 import logging
@@ -88,7 +86,7 @@ def download_yada():
     if tsv_files:
         with open(tsv_files[0], "r", encoding="utf-8") as f:
             lines = f.readlines()
-        logger.info(f"Yada dataset ready: {len(lines)} samples in {dest}")
+        logger.info(f"Yada dataset ready: {len(lines) - 1} samples in {dest}")  # -1 for header
         return True
     else:
         logger.error("Yada dataset: no TSV files found")

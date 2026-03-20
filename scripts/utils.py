@@ -8,16 +8,74 @@
 
 
 #importing the required libraries
-import os
-import logging
 import hashlib
+import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
+from html.parser import HTMLParser
 
 logger = logging.getLogger("darksite")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# ============================================================================
+# HTML TEXT EXTRACTOR
+# ============================================================================
+
+class HTMLTextExtractor(HTMLParser):
+    SKIP_TAGS = {"script", "style", "noscript", "svg", "path", "head"}
+
+    # Void elements (self-closing, never have </end> tags)
+    # These should not be pushed onto skip stack as they'd never get popped
+    VOID_TAGS = {
+        "area", "base", "br", "col", "embed", "hr", "img", "input",
+        "link", "meta", "param", "source", "track", "wbr",
+    }
+
+    def __init__(self):
+        super().__init__()
+        self.text_parts = []
+        self._skip_stack = []
+
+    def handle_starttag(self, tag, attrs):
+        tag_lower = tag.lower()
+        # Void elements never get end tags — skip their content inline, don't push
+        if tag_lower in self.VOID_TAGS:
+            return
+        attr_dict = dict(attrs)
+        style = attr_dict.get("style", "")
+        hidden_style = "display:none" in style.replace(" ", "") or "visibility:hidden" in style.replace(" ", "")
+        if tag_lower in self.SKIP_TAGS or hidden_style:
+            self._skip_stack.append(tag_lower)
+
+    def handle_endtag(self, tag):
+        tag_lower = tag.lower()
+        if tag_lower in self._skip_stack:
+            self._skip_stack.remove(tag_lower)
+
+    def handle_data(self, data):
+        if not self._skip_stack:
+            text = data.strip()
+            if text:
+                self.text_parts.append(text)
+
+    def get_text(self):
+        return " ".join(self.text_parts)
+
+
+def extract_html_text(html_path, max_chars=5000):
+    try:
+        with open(html_path, "r", encoding="utf-8", errors="ignore") as f:
+            html = f.read()
+        extractor = HTMLTextExtractor()
+        extractor.feed(html)
+        text = re.sub(r"\s+", " ", extractor.get_text()).strip()
+        return text[:max_chars]
+    except Exception:
+        return ""
+
 
 #code for folder structure
 def directory_setup(base_path = "data/raw"):
@@ -146,7 +204,7 @@ def load_complete_urls(metadata_path = str(PROJECT_ROOT / "data" / "raw" / "meta
 
     completed = set()
     
-    if os.path.exists(metadata_path):
+    if Path(metadata_path).exists():
         with open(metadata_path, 'r') as f:
             completed = set(line.strip() for line in f)
         logger.info(f"Successfully Loaded {len(completed)} previously scraped URLs")

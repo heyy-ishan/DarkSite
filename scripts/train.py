@@ -18,7 +18,6 @@
 #   3. Set --data-dir and --label-dir to your Drive paths
 #   4. Run this script
 
-import os
 import sys
 import json
 import time
@@ -28,7 +27,7 @@ from pathlib import Path
 from datetime import datetime
 
 import torch
-import torch.nn as nn
+
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from transformers import RobertaTokenizer
@@ -112,7 +111,7 @@ def compute_metrics(all_preds, all_labels, threshold=0.5):
 
     # --- Severity metrics ---
     severity_pred = all_preds["severity"].cpu().argmax(dim=1)
-    severity_true = all_labels["severity"].cpu().squeeze()
+    severity_true = all_labels["severity"].cpu().squeeze(1)
 
     metrics["severity_accuracy"] = (severity_pred == severity_true).float().mean().item()
 
@@ -363,6 +362,7 @@ def train(args):
     }
 
     best_val_f1 = 0.0
+    val_metrics = {}
 
     # --- Training loop ---
     logger.info(f"\nStarting training for {args.epochs} epochs...")
@@ -382,8 +382,8 @@ def train(args):
         # Validate
         val_loss, val_metrics = validate(model, val_loader, criterion, device)
 
-        # Step scheduler
-        scheduler.step()
+        # Step scheduler with explicit epoch for correct resume behavior
+        scheduler.step(epoch)
 
         epoch_time = time.time() - epoch_start
 
@@ -436,10 +436,13 @@ def train(args):
             )
 
     # --- Final save ---
-    save_checkpoint(
-        model, optimizer, scheduler, criterion, args.epochs - 1,
-        val_metrics, output_dir / "final_model.pt"
-    )
+    if val_metrics:
+        save_checkpoint(
+            model, optimizer, scheduler, criterion, args.epochs - 1,
+            val_metrics, output_dir / "final_model.pt"
+        )
+    else:
+        logger.warning("No training epochs ran — skipping final checkpoint save.")
 
     # Save training log
     log_path = output_dir / "training_log.json"
