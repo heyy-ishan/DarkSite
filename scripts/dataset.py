@@ -3,24 +3,31 @@
 #
 # Merges 2 data sources into a unified PyTorch Dataset:
 #
-#   1. OWN SCRAPED DATA (946 samples)
+#   1. OWN SCRAPED DATA (~1500 samples)
 #      → All 3 modalities: screenshot, DOM text, structural features
 #      → Labels from Phase 2 auto-labeler
 #
-#   2. YADA ET AL. (IEEE BigData 2022) (~3,600 samples)
+#   2. YADA ET AL. (IEEE BigData 2022) (~2,300 samples)
 #      → Text-only: balanced dark + non-dark pattern texts
 #      → Includes Mathur/Princeton dark pattern strings + clean negatives
 #      → Image & structural branches get zero tensors
 #
-# Combined: ~4,500 training samples
+# Features:
+#   - Domain-level train/val/test split (no data leakage)
+#   - WeightedRandomSampler (own data 3x weight over Yada)
+#   - Confidence-weighted training support
+#   - Train-time image augmentation
 
 import csv
 import json
 import logging
+import random
+from collections import defaultdict
 from pathlib import Path
+from urllib.parse import urlparse
 
 import torch
-from torch.utils.data import Dataset, DataLoader, ConcatDataset
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from torchvision import transforms
 from PIL import Image
 
@@ -60,8 +67,19 @@ SEVERITY_TO_IDX = {s: i for i, s in enumerate(SEVERITY_LEVELS)}
 
 NUM_STRUCTURAL_FEATURES = 24
 
-IMAGE_TRANSFORM = transforms.Compose([
-    transforms.Resize((224, 224)),
+# Training augmentation: conservative transforms for web screenshots
+IMAGE_TRANSFORM_TRAIN = transforms.Compose([
+    transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),
+    transforms.RandomHorizontalFlip(0.5),
+    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.1),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
+
+# Evaluation: deterministic transform
+IMAGE_TRANSFORM_EVAL = transforms.Compose([
+    transforms.Resize(256),
+    transforms.CenterCrop(224),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
@@ -98,7 +116,102 @@ DARK_PATTERN_TYPE_MAP = {
     "friend spam": "FORCED_ACTION",
 }
 
+# Severity mapping for Yada text dataset (by dark pattern type)
+TYPE_SEVERITY_MAP = {
+    "HIDDEN_COSTS": "high",
+    "SNEAKING": "high",
+    "FORCED_ACTION": "high",
+    "OBSTRUCTION": "high",
+    "SCARCITY": "medium",
+    "URGENCY": "medium",
+    "MISDIRECTION": "medium",
+    "INTERFACE_INTERFERENCE": "medium",
+    "SOCIAL_PROOF": "low",
+    "CONFIRMSHAMING": "low",
+    "NAGGING": "low",
+}
 
+
+# ============================================================================
+# DOMAIN-LEVEL SPLITTING (prevents data leakage between train/val/test)
+# ============================================================================
+
+def _extract_domain(label_path):
+    """Extract domain from a label JSON file."""
+    try:
+        with open(label_path) as f:
+            data = json.load(f)
+        url = data.get("url", "")
+        if not url:
+            return "unknown"
+        netloc = urlparse(url).netloc
+        if netloc.startswith("www."):
+            netloc = netloc[4:]
+        if netloc.startswith("www2."):
+            netloc = netloc[5:]
+        return netloc or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _is_dark_category(label_path):
+    """Check if a sample is from a dark-pattern-prone category."""
+    clean_categories = {"government", "education", "nonprofit", "developer",
+                        "ethical", "utility", "public_tools"}
+    try:
+        with open(label_path) as f:
+            data = json.load(f)
+        return data.get("category", "") not in clean_categories
+    except Exception:
+        return True
+
+
+def domain_level_split(samples, train_ratio=0.70, val_ratio=0.15, seed=42):
+    """
+    Split samples by domain so no domain appears in multiple splits.
+    Stratified by dark/clean category to maintain class balance.
+
+    Returns:
+        (train_indices, val_indices, test_indices)
+    """
+    domain_to_indices = defaultdict(list)
+    domain_is_dark = {}
+    for idx, sample in enumerate(samples):
+        domain = _extract_domain(sample["label"])
+        domain_to_indices[domain].append(idx)
+        if domain not in domain_is_dark:
+            domain_is_dark[domain] = _is_dark_category(sample["label"])
+
+    dark_domains = [d for d in domain_to_indices if domain_is_dark.get(d, True)]
+    clean_domains = [d for d in domain_to_indices if not domain_is_dark.get(d, True)]
+
+    rng = random.Random(seed)
+    rng.shuffle(dark_domains)
+    rng.shuffle(clean_domains)
+
+    def split_domain_list(domains):
+        n = len(domains)
+        n_train = int(n * train_ratio)
+        n_val = int(n * val_ratio)
+        return domains[:n_train], domains[n_train:n_train + n_val], domains[n_train + n_val:]
+
+    dark_train, dark_val, dark_test = split_domain_list(dark_domains)
+    clean_train, clean_val, clean_test = split_domain_list(clean_domains)
+
+    train_indices, val_indices, test_indices = [], [], []
+    for d in dark_train + clean_train:
+        train_indices.extend(domain_to_indices[d])
+    for d in dark_val + clean_val:
+        val_indices.extend(domain_to_indices[d])
+    for d in dark_test + clean_test:
+        test_indices.extend(domain_to_indices[d])
+
+    logger.info(f"  Domain split: {len(dark_domains)} dark + {len(clean_domains)} clean domains")
+    logger.info(f"  Train: {len(train_indices)} samples ({len(dark_train)+len(clean_train)} domains)")
+    logger.info(f"  Val:   {len(val_indices)} samples ({len(dark_val)+len(clean_val)} domains)")
+    logger.info(f"  Test:  {len(test_indices)} samples ({len(dark_test)+len(clean_test)} domains)")
+
+    return train_indices, val_indices, test_indices
 
 
 # ============================================================================
@@ -207,11 +320,13 @@ class OwnScrapedDataset(Dataset):
     Has all 3 modalities: screenshot, DOM text, structural features.
     """
 
-    def __init__(self, data_dir=None, label_dir=None, tokenizer=None, max_text_len=256):
+    def __init__(self, data_dir=None, label_dir=None, tokenizer=None,
+                 max_text_len=256, image_transform=None):
         self.data_dir = Path(data_dir) if data_dir else PROJECT_ROOT / "data" / "raw"
         self.label_dir = Path(label_dir) if label_dir else PROJECT_ROOT / "data" / "labeled"
         self.tokenizer = tokenizer
         self.max_text_len = max_text_len
+        self.image_transform = image_transform or IMAGE_TRANSFORM_EVAL
         self.samples = self._collect()
 
     def _collect(self):
@@ -243,9 +358,9 @@ class OwnScrapedDataset(Dataset):
     def __getitem__(self, idx):
         s = self.samples[idx]
 
-        # Image
+        # Image (with augmentation for training)
         try:
-            image = IMAGE_TRANSFORM(Image.open(s["screenshot"]).convert("RGB"))
+            image = self.image_transform(Image.open(s["screenshot"]).convert("RGB"))
         except Exception:
             image = torch.zeros(3, 224, 224)
 
@@ -283,6 +398,9 @@ class OwnScrapedDataset(Dataset):
             label_data = {}
         labels = extract_labels_from_labeler(label_data)
 
+        # Confidence from ensemble labeler
+        confidence = label_data.get("label", {}).get("confidence", 0.7)
+
         return {
             "image": image,
             "input_ids": input_ids,
@@ -291,6 +409,7 @@ class OwnScrapedDataset(Dataset):
             "binary_label": torch.tensor([labels["binary"]], dtype=torch.float32),
             "type_labels": torch.tensor(labels["types"], dtype=torch.float32),
             "severity_label": torch.tensor([labels["severity"]], dtype=torch.long),
+            "confidence": torch.tensor([confidence], dtype=torch.float32),
             "page_id": s["page_id"],
             "source": "own",
         }
@@ -298,7 +417,6 @@ class OwnScrapedDataset(Dataset):
 
 # ============================================================================
 # DATASET 2: YADA ET AL. (text-only, balanced dark + clean)
-# Includes Mathur/Princeton dark pattern texts + clean negative samples
 # ============================================================================
 
 class YadaDataset(Dataset):
@@ -349,11 +467,19 @@ class YadaDataset(Dataset):
                     if is_dark and dp_type and dp_type in TYPE_TO_IDX:
                         types[TYPE_TO_IDX[dp_type]] = 1.0
 
+                    # Severity by type (not hardcoded "medium")
+                    if is_dark and dp_type:
+                        sev_str = TYPE_SEVERITY_MAP.get(dp_type, "medium")
+                    elif is_dark:
+                        sev_str = "medium"
+                    else:
+                        sev_str = "none"
+
                     samples.append({
                         "text": text,
                         "binary": 1.0 if is_dark else 0.0,
                         "types": types,
-                        "severity": SEVERITY_TO_IDX["medium"] if is_dark else SEVERITY_TO_IDX["none"],
+                        "severity": SEVERITY_TO_IDX[sev_str],
                     })
         except Exception as e:
             logger.warning(f"Error reading Yada TSV: {e}")
@@ -391,6 +517,7 @@ class YadaDataset(Dataset):
             "binary_label": torch.tensor([s["binary"]], dtype=torch.float32),
             "type_labels": torch.tensor(s["types"], dtype=torch.float32),
             "severity_label": torch.tensor([s["severity"]], dtype=torch.long),
+            "confidence": torch.tensor([1.0], dtype=torch.float32),
             "page_id": f"yada_{idx}",
             "source": "yada",
         }
@@ -402,102 +529,151 @@ class YadaDataset(Dataset):
 
 class CombinedDarkPatternDataset(Dataset):
     """
-    Wraps ConcatDataset to provide unified access to all 3 sources.
-    Handles train/val splitting across the combined data.
+    Combines own scraped data with Yada text data.
+    Supports domain-level splitting and weighted sampling.
     """
 
     def __init__(self, tokenizer=None, max_text_len=256, split="train",
-                 split_ratio=0.8, seed=42, data_dir=None, label_dir=None,
-                 use_yada=True):
+                 seed=42, data_dir=None, label_dir=None,
+                 use_yada=True, image_transform=None,
+                 _own_indices=None, _own_dataset=None, _yada_dataset=None):
 
-        datasets = []
-
-        # Source 1: Own scraped data (always included)
-        own = OwnScrapedDataset(data_dir=data_dir, label_dir=label_dir,
-                                tokenizer=tokenizer, max_text_len=max_text_len)
-        if len(own) > 0:
-            datasets.append(own)
-            logger.info(f"  Own scraped data: {len(own)} samples")
-
-        # Source 2: Yada (includes Mathur/Princeton texts + clean negatives)
-        if use_yada:
-            yada = YadaDataset(tokenizer=tokenizer, max_text_len=max_text_len)
-            if len(yada) > 0:
-                datasets.append(yada)
-
-        if not datasets:
-            logger.error("No datasets found! Check your data directories.")
-            self.indices = []
-            self.combined = None
-            return
-
-        # Combine all
-        combined = ConcatDataset(datasets)
-        total = len(combined)
-        logger.info(f"  Combined total: {total} samples")
-
-        # Split (use local Generator to avoid resetting global RNG)
-        g = torch.Generator().manual_seed(seed)
-        indices = torch.randperm(total, generator=g).tolist()
-        n_train = int(total * split_ratio)
-
-        if split == "train":
-            self.indices = indices[:n_train]
+        if _own_dataset is not None:
+            own = _own_dataset
+            own_indices = _own_indices or list(range(len(own)))
         else:
-            self.indices = indices[n_train:]
+            own = OwnScrapedDataset(
+                data_dir=data_dir, label_dir=label_dir,
+                tokenizer=tokenizer, max_text_len=max_text_len,
+                image_transform=image_transform,
+            )
+            own_indices = list(range(len(own)))
 
-        self.combined = combined
-        logger.info(f"  Split [{split}]: {len(self.indices)} samples")
+        self.own_dataset = own
+        self.own_indices = own_indices
+
+        # Yada: only add to train split
+        self.yada_dataset = None
+        self.yada_indices = []
+        if use_yada and split == "train":
+            if _yada_dataset is not None:
+                yada = _yada_dataset
+            else:
+                yada = YadaDataset(tokenizer=tokenizer, max_text_len=max_text_len)
+            if len(yada) > 0:
+                self.yada_dataset = yada
+                self.yada_indices = list(range(len(yada)))
+                logger.info(f"  Yada dataset: {len(yada)} samples (train only)")
+
+        # Build index map: (source, idx_in_source)
+        self._index_map = []
+        for idx in self.own_indices:
+            self._index_map.append(("own", idx))
+        for idx in self.yada_indices:
+            self._index_map.append(("yada", idx))
+
+        logger.info(f"  Split [{split}]: {len(self._index_map)} samples "
+                    f"({len(self.own_indices)} own + {len(self.yada_indices)} yada)")
 
     def __len__(self):
-        return len(self.indices)
+        return len(self._index_map)
 
     def __getitem__(self, idx):
-        return self.combined[self.indices[idx]]
+        source, source_idx = self._index_map[idx]
+        if source == "own":
+            return self.own_dataset[source_idx]
+        else:
+            return self.yada_dataset[source_idx]
+
+    def get_source_weights(self):
+        """Return per-sample weights for WeightedRandomSampler."""
+        weights = []
+        for source, _ in self._index_map:
+            weights.append(3.0 if source == "own" else 1.0)
+        return weights
 
 
 def create_dataloaders(tokenizer, batch_size=8, num_workers=2,
                        data_dir=None, label_dir=None,
-                       use_yada=True):
+                       use_yada=True, seed=42):
     """
-    Create train and validation dataloaders from all available sources.
-
-    Args:
-        tokenizer: HuggingFace RobertaTokenizer
-        batch_size: Batch size
-        num_workers: Dataloader workers
-        data_dir: Override for data/raw/
-        label_dir: Override for data/labeled/
-        use_yada: Include Yada text dataset
+    Create train, val, and test dataloaders with domain-level splitting.
 
     Returns:
-        (train_loader, val_loader, dataset_info)
+        (train_loader, val_loader, test_loader, dataset_info)
     """
     logger.info("Loading datasets...")
 
-    train_dataset = CombinedDarkPatternDataset(
-        tokenizer=tokenizer, split="train",
+    # Build own dataset once with eval transform (for splitting)
+    own_full = OwnScrapedDataset(
         data_dir=data_dir, label_dir=label_dir,
-        use_yada=use_yada,
+        tokenizer=tokenizer, image_transform=IMAGE_TRANSFORM_EVAL,
     )
-    val_dataset = CombinedDarkPatternDataset(
-        tokenizer=tokenizer, split="val",
+    logger.info(f"  Own scraped data: {len(own_full)} samples")
+
+    if len(own_full) == 0:
+        logger.error("No own data found!")
+        empty_info = {"num_train": 0, "num_val": 0, "num_test": 0,
+                      "num_types": NUM_TYPES, "num_severity": NUM_SEVERITY,
+                      "num_structural": NUM_STRUCTURAL_FEATURES,
+                      "type_names": DARK_PATTERN_TYPES, "severity_names": SEVERITY_LEVELS}
+        return None, None, None, empty_info
+
+    # Domain-level split
+    train_idx, val_idx, test_idx = domain_level_split(own_full.samples, seed=seed)
+
+    # Train: own data with augmentation + Yada
+    own_train = OwnScrapedDataset(
         data_dir=data_dir, label_dir=label_dir,
+        tokenizer=tokenizer, image_transform=IMAGE_TRANSFORM_TRAIN,
+    )
+    train_dataset = CombinedDarkPatternDataset(
+        tokenizer=tokenizer, split="train", seed=seed,
         use_yada=use_yada,
+        _own_indices=train_idx, _own_dataset=own_train,
+    )
+
+    # Val: own data only, no augmentation
+    val_dataset = CombinedDarkPatternDataset(
+        tokenizer=tokenizer, split="val", seed=seed,
+        use_yada=False,
+        _own_indices=val_idx, _own_dataset=own_full,
+    )
+
+    # Test: own data only, no augmentation
+    test_dataset = CombinedDarkPatternDataset(
+        tokenizer=tokenizer, split="test", seed=seed,
+        use_yada=False,
+        _own_indices=test_idx, _own_dataset=own_full,
+    )
+
+    # Weighted sampler for training (own data 3x, Yada 1x)
+    train_weights = train_dataset.get_source_weights()
+    train_sampler = WeightedRandomSampler(
+        weights=train_weights,
+        num_samples=len(train_dataset),
+        replacement=True,
     )
 
     train_loader = DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True,
+        train_dataset, batch_size=batch_size, sampler=train_sampler,
         num_workers=num_workers, pin_memory=True, drop_last=True,
     )
     val_loader = DataLoader(
         val_dataset, batch_size=batch_size, shuffle=False,
         num_workers=num_workers, pin_memory=True,
     )
+    test_loader = DataLoader(
+        test_dataset, batch_size=batch_size, shuffle=False,
+        num_workers=num_workers, pin_memory=True,
+    )
 
     dataset_info = {
         "num_train": len(train_dataset),
         "num_val": len(val_dataset),
+        "num_test": len(test_dataset),
+        "num_own_train": len(train_idx),
+        "num_yada_train": len(train_dataset) - len(train_idx),
         "num_types": NUM_TYPES,
         "num_severity": NUM_SEVERITY,
         "num_structural": NUM_STRUCTURAL_FEATURES,
@@ -505,5 +681,7 @@ def create_dataloaders(tokenizer, batch_size=8, num_workers=2,
         "severity_names": SEVERITY_LEVELS,
     }
 
-    logger.info(f"Train: {dataset_info['num_train']} | Val: {dataset_info['num_val']}")
-    return train_loader, val_loader, dataset_info
+    logger.info(f"Train: {dataset_info['num_train']} ({dataset_info['num_own_train']} own + "
+                f"{dataset_info['num_yada_train']} yada) | Val: {dataset_info['num_val']} | "
+                f"Test: {dataset_info['num_test']}")
+    return train_loader, val_loader, test_loader, dataset_info

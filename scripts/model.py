@@ -194,27 +194,36 @@ class DarkPatternDetector(nn.Module):
         embed_dim=768,
         freeze_backbone_layers=8,
         dropout=0.2,
+        disable_branches=None,
     ):
         super().__init__()
 
         self.embed_dim = embed_dim
+        self.disable_branches = set(disable_branches or [])
 
         # --- Visual branch: ViT ---
-        self.vit = ViTModel.from_pretrained(vit_model_name)
-        # Freeze early layers, finetune later layers
-        self._freeze_vit_layers(freeze_backbone_layers)
+        if "visual" not in self.disable_branches:
+            self.vit = ViTModel.from_pretrained(vit_model_name)
+            self._freeze_vit_layers(freeze_backbone_layers)
+        else:
+            self.vit = None
 
         # --- Text branch: RoBERTa ---
-        self.roberta = RobertaModel.from_pretrained(roberta_model_name)
-        # Freeze early layers
-        self._freeze_roberta_layers(freeze_backbone_layers)
+        if "text" not in self.disable_branches:
+            self.roberta = RobertaModel.from_pretrained(roberta_model_name)
+            self._freeze_roberta_layers(freeze_backbone_layers)
+        else:
+            self.roberta = None
 
         # --- Structural branch: MLP ---
-        self.structural_branch = StructuralBranch(
-            input_dim=num_structural_features,
-            output_dim=embed_dim,
-            dropout=dropout,
-        )
+        if "structural" not in self.disable_branches:
+            self.structural_branch = StructuralBranch(
+                input_dim=num_structural_features,
+                output_dim=embed_dim,
+                dropout=dropout,
+            )
+        else:
+            self.structural_branch = None
 
         # --- Fusion ---
         self.fusion = CrossModalAttention(
@@ -233,10 +242,10 @@ class DarkPatternDetector(nn.Module):
 
     def _freeze_vit_layers(self, num_layers):
         """Freeze the first `num_layers` of ViT encoder (out of 12)."""
-        # Freeze embeddings
+        if self.vit is None:
+            return
         for param in self.vit.embeddings.parameters():
             param.requires_grad = False
-        # Freeze first N encoder layers
         for i, layer in enumerate(self.vit.encoder.layer):
             if i < num_layers:
                 for param in layer.parameters():
@@ -244,47 +253,38 @@ class DarkPatternDetector(nn.Module):
 
     def _freeze_roberta_layers(self, num_layers):
         """Freeze the first `num_layers` of RoBERTa encoder (out of 12)."""
-        # Freeze embeddings
+        if self.roberta is None:
+            return
         for param in self.roberta.embeddings.parameters():
             param.requires_grad = False
-        # Freeze first N encoder layers
         for i, layer in enumerate(self.roberta.encoder.layer):
             if i < num_layers:
                 for param in layer.parameters():
                     param.requires_grad = False
 
     def forward(self, image, input_ids, attention_mask, structural):
-       
+        batch_size = image.size(0)
+        device = image.device
 
-        # Forward pass through all branches, fusion, and prediction heads.
-
-        # Args:
-        #     image: Tensor [batch, 3, 224, 224]
-        #     input_ids: Tensor [batch, max_len]
-        #     attention_mask: Tensor [batch, max_len]
-        #     structural: Tensor [batch, 24]
-
-        # Returns:
-        #     dict with:
-        #         binary_logits: Tensor [batch, 1]
-        #         type_logits: Tensor [batch, 11]
-        #         severity_logits: Tensor [batch, 4]
-        #         attention_weights: Tensor [batch, num_heads, 3, 3]
-       
         # --- Branch 1: Visual (ViT) ---
-        # ViT outputs: last_hidden_state [batch, num_patches+1, 768]
-        # Use the [CLS] token (index 0) as the image representation
-        vit_output = self.vit(pixel_values=image)
-        visual_feat = vit_output.last_hidden_state[:, 0, :]  # [batch, 768]
+        if self.vit is not None:
+            vit_output = self.vit(pixel_values=image)
+            visual_feat = vit_output.last_hidden_state[:, 0, :]
+        else:
+            visual_feat = torch.zeros(batch_size, self.embed_dim, device=device)
 
         # --- Branch 2: Text (RoBERTa) ---
-        # RoBERTa outputs: last_hidden_state [batch, seq_len, 768]
-        # Use the [CLS] token (index 0) as the text representation
-        roberta_output = self.roberta(input_ids=input_ids, attention_mask=attention_mask)
-        text_feat = roberta_output.last_hidden_state[:, 0, :]  # [batch, 768]
+        if self.roberta is not None:
+            roberta_output = self.roberta(input_ids=input_ids, attention_mask=attention_mask)
+            text_feat = roberta_output.last_hidden_state[:, 0, :]
+        else:
+            text_feat = torch.zeros(batch_size, self.embed_dim, device=device)
 
         # --- Branch 3: Structural (MLP) ---
-        structural_feat = self.structural_branch(structural)  # [batch, 768]
+        if self.structural_branch is not None:
+            structural_feat = self.structural_branch(structural)
+        else:
+            structural_feat = torch.zeros(batch_size, self.embed_dim, device=device)
 
         # --- Fusion ---
         fused, attn_weights = self.fusion(visual_feat, text_feat, structural_feat)
@@ -313,8 +313,6 @@ class DarkPatternDetector(nn.Module):
 
     def get_param_groups(self, lr_backbone=1e-5, lr_new=1e-4):
         # Get parameter groups with different learning rates.
-        # Pre-trained layers get a lower LR, new layers get a higher LR.
-        
         backbone_params = []
         new_params = []
 
@@ -326,10 +324,12 @@ class DarkPatternDetector(nn.Module):
             else:
                 new_params.append(param)
 
-        return [
-            {"params": backbone_params, "lr": lr_backbone},
-            {"params": new_params, "lr": lr_new},
-        ]
+        groups = []
+        if backbone_params:
+            groups.append({"params": backbone_params, "lr": lr_backbone})
+        if new_params:
+            groups.append({"params": new_params, "lr": lr_new})
+        return groups
 
 
 # ============================================================================
@@ -337,48 +337,57 @@ class DarkPatternDetector(nn.Module):
 # ============================================================================
 
 class MultiTaskLoss(nn.Module):
-    
-    #Combined loss for three tasks with learnable task weights.
-    
-    #Uses uncertainty-based weighting (Kendall et al., 2018) to automatically
-    #balance the three losses during training.
-    
-    def __init__(self):
+    # Combined loss with learnable task weights (Kendall et al., 2018),
+    # class weights for imbalanced labels, and confidence-based sample weighting.
+
+    def __init__(self, type_pos_weights=None, severity_weights=None):
         super().__init__()
-        # Learnable log-variance parameters for each task
-        # Initialize to 0 (equal weighting)
         self.log_var_binary = nn.Parameter(torch.zeros(1))
         self.log_var_types = nn.Parameter(torch.zeros(1))
         self.log_var_severity = nn.Parameter(torch.zeros(1))
 
+        if type_pos_weights is not None:
+            self.register_buffer("type_pos_weights", type_pos_weights)
+        else:
+            self.type_pos_weights = None
+
+        if severity_weights is not None:
+            self.register_buffer("severity_weights", severity_weights)
+        else:
+            self.severity_weights = None
+
     def forward(self, binary_logits, type_logits, severity_logits,
-                binary_labels, type_labels, severity_labels):
+                binary_labels, type_labels, severity_labels,
+                sample_weights=None):
 
-        # Compute weighted multi-task loss.
+        # Per-sample losses (reduction="none")
+        loss_binary_unreduced = F.binary_cross_entropy_with_logits(
+            binary_logits, binary_labels, reduction="none"
+        )
+        loss_types_unreduced = F.binary_cross_entropy_with_logits(
+            type_logits, type_labels,
+            pos_weight=self.type_pos_weights,
+            reduction="none",
+        )
+        loss_severity_unreduced = F.cross_entropy(
+            severity_logits, severity_labels.squeeze(1),
+            weight=self.severity_weights,
+            reduction="none",
+        )
 
-        # Args:
-        #     binary_logits: [batch, 1]
-        #     type_logits: [batch, 11]
-        #     severity_logits: [batch, 4]
-        #     binary_labels: [batch, 1]
-        #     type_labels: [batch, 11]
-        #     severity_labels: [batch, 1]
+        # Apply confidence-based sample weights
+        if sample_weights is not None:
+            sw = sample_weights.view(-1, 1)  # [batch, 1]
+            loss_binary_unreduced = loss_binary_unreduced * sw
+            loss_types_unreduced = loss_types_unreduced * sw
+            loss_severity_unreduced = loss_severity_unreduced * sample_weights.view(-1)
 
-        # Returns:
-        #     total_loss, loss_dict
+        # Reduce to scalar
+        loss_binary = loss_binary_unreduced.mean()
+        loss_types = loss_types_unreduced.mean()
+        loss_severity = loss_severity_unreduced.mean()
 
-        # Binary classification loss
-        loss_binary = F.binary_cross_entropy_with_logits(binary_logits, binary_labels)
-
-        # Multi-label classification loss
-        loss_types = F.binary_cross_entropy_with_logits(type_logits, type_labels)
-
-        # Severity classification loss
-        loss_severity = F.cross_entropy(severity_logits, severity_labels.squeeze(1))
-
-        # Uncertainty-based weighting:
-        # L_total = (1/2σ²) * L_task + log(σ)
-        # Using log-variance for numerical stability
+        # Uncertainty-based weighting
         precision_binary = torch.exp(-self.log_var_binary)
         precision_types = torch.exp(-self.log_var_types)
         precision_severity = torch.exp(-self.log_var_severity)

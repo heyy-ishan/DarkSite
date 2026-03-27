@@ -1,7 +1,7 @@
 """
 URL sources for dark pattern detection research.
 
-~1,000+ URLs across 20 categories with sub-page coverage.
+~1,520+ URLs across 20 categories with sub-page coverage.
 Each major site includes homepage + checkout/pricing/signup sub-pages
 to capture dark patterns at different stages of the user journey.
 
@@ -15,6 +15,7 @@ CHANGELOG (fixed):
 - Fixed wrong domains (soundcloud.com, vanityfair.com)
 - Removed session-required pages (checkout pages needing active cart)
 - Replaced FIFA references with EA FC
+- Expansion round 2: Added ~587 new URLs across all categories (new domains only)
 """
 
 import logging
@@ -130,6 +131,87 @@ ECOMMERCE_URLS = [
     "https://www.bodybuilding.com/store/deals",
     "https://www.gnc.com/deals/",
     "https://www.vitacost.com/sale",
+
+    # --- Added: Expansion round 2 ---
+    # Jewelry / accessories
+    "https://www.bluenile.com",
+    "https://www.bluenile.com/diamond-jewelry",
+    "https://www.jared.com",
+    "https://www.kay.com",
+    "https://www.zales.com",
+    "https://www.pandora.net/en-us",
+    "https://www.mejuri.com",
+    "https://www.brilliantearth.com",
+
+    # Home goods / furniture
+    "https://www.potterybarn.com",
+    "https://www.westelm.com",
+    "https://www.cb2.com",
+    "https://www.crateandbarrel.com",
+    "https://www.pier1.com",
+    "https://www.article.com",
+    "https://www.castlery.com",
+    "https://www.burrow.com",
+
+    # Luxury / department
+    "https://www.saksfifthavenue.com",
+    "https://www.neimanmarcus.com",
+    "https://www.bloomingdales.com",
+    "https://www.bergdorfgoodman.com",
+    "https://www.net-a-porter.com",
+    "https://www.farfetch.com",
+    "https://www.ssense.com",
+
+    # Marketplace / other retail
+    "https://www.etsy.com",
+    "https://www.mercari.com",
+    "https://www.poshmark.com",
+    "https://www.thredup.com",
+    "https://www.6pm.com",
+    "https://www.zappos.com",
+    "https://www.chewy.com",
+
+    # Beauty / cosmetics
+    "https://www.sephora.com",
+    "https://www.sephora.com/sale",
+    "https://www.ulta.com",
+    "https://www.ulta.com/promotion/sale",
+    "https://www.glossier.com",
+    "https://www.fentybeauty.com",
+    "https://www.bathandbodyworks.com",
+    "https://www.colourpop.com",
+
+    # Sporting goods
+    "https://www.dickssportinggoods.com",
+    "https://www.rei.com",
+    "https://www.rei.com/deals",
+    "https://www.backcountry.com",
+    "https://www.cabelas.com",
+    "https://www.academy.com",
+
+    # Office / craft supplies
+    "https://www.staples.com/deals",
+    "https://www.officedepot.com/deals",
+    "https://www.hobbylobby.com",
+    "https://www.joann.com",
+    "https://www.michaels.com",
+
+    # Discount / warehouse
+    "https://www.dollargeneral.com",
+    "https://www.dollartree.com",
+    "https://www.fivebelow.com",
+    "https://www.burlington.com",
+    "https://www.rossstores.com",
+    "https://www.bigbigdeals.com",
+    "https://www.shopjustice.com",
+    "https://www.gap.com/browse/sale",
+    "https://www.oldnavy.com/shop/sale",
+    "https://www.bananarepublic.com/shop/sale",
+    "https://www.anthropologie.com/sale",
+    "https://www.levi.com/US/en_US/sale",
+    "https://www.coach.com/sale",
+    "https://www.katespade.com/sale",
+    "https://www.ralphlauren.com/sale",
 ]
 
 
@@ -213,6 +295,52 @@ TRAVEL_URLS = [
     "https://www.carnival.com/cruise-deals",
     "https://www.travelzoo.com",
     "https://www.vacationexpress.com",
+
+    # --- Added: Expansion round 2 ---
+    # More airlines
+    "https://www.norwegian.com",
+    "https://www.vueling.com",
+    "https://www.volaris.com",
+    "https://www.jetblue.com",
+    "https://www.jetblue.com/trueblue",
+    "https://www.southwest.com",
+
+    # Tour operators / travel insurance
+    "https://www.viator.com",
+    "https://www.getyourguide.com",
+    "https://www.klook.com",
+    "https://www.contiki.com",
+    "https://www.gadventures.com",
+    "https://www.intrepidtravel.com",
+    "https://www.worldnomads.com",
+    "https://www.squaremouth.com",
+    "https://www.allianzassistance.com",
+    "https://www.travelguard.com",
+
+    # Additional travel aggregators
+    "https://www.lonelyplanet.com",
+    "https://www.rome2rio.com",
+    "https://www.omio.com",
+    "https://www.trainline.com",
+
+    # More hotels / vacation
+    "https://www.ihg.com",
+    "https://www.marriott.com",
+    "https://www.hilton.com",
+    "https://www.hyatt.com",
+    "https://www.wyndhamhotels.com",
+    "https://www.choicehotels.com",
+    "https://www.accor.com",
+    "https://www.radissonhotels.com",
+    "https://www.homeaway.com",
+    "https://www.getaroom.com",
+
+    # Activities / experiences
+    "https://www.musement.com",
+    "https://www.tiqets.com",
+    "https://www.civitatis.com/en/",
+    "https://www.withlocals.com",
+    "https://www.headout.com/travel-guides/",
 ]
 
 
@@ -266,6 +394,31 @@ STREAMING_URLS = [
     "https://www.scribd.com",
     "https://www.amazon.com/kindle-unlimited",
     "https://www.blinkist.com/en/plans",
+
+    # --- Added: Expansion round 2 ---
+    # Niche streaming / sports
+    "https://www.britbox.com",
+    "https://www.acorn.tv",
+    "https://www.shudder.com",
+    "https://www.curiositystream.com",
+    "https://www.mubi.com",
+    "https://www.kanopy.com",
+    "https://www.espnplus.com",
+    "https://www.dazn.com",
+
+    # Audiobook / podcast premium
+    "https://www.libro.fm",
+    "https://www.kobo.com/us/en/audiobooks",
+    "https://www.storytel.com",
+    "https://www.podimo.com",
+    "https://www.luminary.link",
+    "https://www.stitcher.com",
+    "https://pocketcasts.com",
+
+    # Live TV / sports streaming
+    "https://www.directvstream.com",
+    "https://www.vidgo.com",
+    "https://www.frndlytv.com",
 ]
 
 
@@ -297,6 +450,23 @@ SOCIAL_MEDIA_URLS = [
     "https://www.patreon.com",
     "https://www.substack.com",
     "https://www.snapchat.com",
+
+    # --- Added: Expansion round 2 ---
+    "https://www.threads.net",
+    "https://www.lemon8-app.com",
+    "https://www.bereal.com",
+    "https://www.clubhouse.com",
+    "https://cohost.org",
+    "https://www.deviantart.com",
+    "https://www.goodreads.com/community",
+    "https://www.flickr.com",
+    "https://vero.co",
+    "https://www.polywork.com",
+    "https://www.producthunt.com",
+    "https://www.minds.com",
+    "https://hive.social",
+    "https://www.spoutible.com",
+    "https://www.truthsocial.com",
 ]
 
 
@@ -411,6 +581,61 @@ SAAS_URLS = [
     "https://www.brevo.com/pricing/",
     "https://www.aweber.com/pricing.htm",
     "https://convertkit.com/pricing",
+
+    # --- Added: Expansion round 2 ---
+    # CRM / project management
+    "https://www.pipedrive.com/en/pricing",
+    "https://www.insightly.com/pricing/",
+    "https://www.copper.com/pricing",
+    "https://www.teamwork.com/pricing",
+    "https://www.wrike.com/pricing/",
+    "https://www.smartsheet.com/pricing",
+
+    # AI tools (subscription-heavy)
+    "https://www.jasper.ai/pricing",
+    "https://www.copy.ai/pricing",
+    "https://www.writesonic.com/pricing",
+    "https://www.synthesia.io/pricing",
+    "https://www.midjourney.com",
+    "https://openai.com/chatgpt/pricing",
+    "https://www.runway.ml/pricing",
+
+    # Marketing / analytics
+    "https://www.semrush.com/prices/",
+    "https://ahrefs.com/pricing",
+    "https://moz.com/products/pro/pricing",
+    "https://www.hotjar.com/pricing/",
+    "https://www.crazyegg.com/pricing",
+    "https://www.optimizely.com",
+    "https://www.hootsuite.com/plans",
+    "https://buffer.com/pricing",
+    "https://sproutsocial.com/pricing/",
+
+    # Accounting / HR
+    "https://www.quickbooks.intuit.com/pricing/",
+    "https://www.xero.com/us/pricing/",
+    "https://www.gusto.com/pricing",
+    "https://www.rippling.com/pricing",
+    "https://www.bamboohr.com/pricing",
+    "https://www.deel.com/pricing",
+
+    # Communication / video
+    "https://www.loom.com/pricing",
+    "https://www.calendly.com/pricing",
+    "https://www.ringcentral.com/office/plansandpricing.html",
+    "https://www.vonage.com/unified-communications/pricing/",
+    "https://www.dialpad.com/pricing/",
+
+    # Document / signature
+    "https://www.docusign.com/products-and-pricing",
+    "https://www.hellosign.com/pricing",
+    "https://www.pandadoc.com/pricing/",
+    "https://www.signnow.com/pricing",
+
+    # Survey / forms
+    "https://www.surveymonkey.com/pricing/individual/",
+    "https://www.typeform.com/pricing/",
+    "https://www.jotform.com/pricing/",
 ]
 
 
@@ -464,6 +689,30 @@ NEWS_MEDIA_URLS = [
     "https://www.vanityfair.com",
     "https://www.gq.com",
     "https://www.cosmopolitan.com",
+
+    # --- Added: Expansion round 2 ---
+    "https://www.thetimes.com",
+    "https://www.telegraph.co.uk",
+    "https://www.spiegel.de/international/",
+    "https://www.lemonde.fr/en/",
+    "https://www.japantimes.co.jp",
+    "https://www.scmp.com",
+    "https://www.aljazeera.com",
+    "https://www.theverge.com",
+    "https://www.techcrunch.com",
+    "https://arstechnica.com",
+    "https://www.salon.com",
+    "https://www.slate.com",
+    "https://www.thedailybeast.com",
+    "https://www.esquire.com",
+    "https://www.harpersbazaar.com",
+
+    # Tech / science publications
+    "https://www.cnet.com",
+    "https://www.zdnet.com",
+    "https://www.engadget.com",
+    "https://www.tomshardware.com",
+    "https://www.pcmag.com",
 ]
 
 
@@ -506,6 +755,28 @@ GAMING_URLS = [
     "https://www.fanatical.com",
     "https://www.kinguin.net",
     "https://www.eneba.com",
+
+    # --- Added: Expansion round 2 ---
+    "https://www.instant-gaming.com",
+    "https://www.allkeyshop.com",
+    "https://gg.deals",
+    "https://www.indiegala.com",
+    "https://www.gamefly.com",
+    "https://www.greenmangaming.com/hot-deals/",
+    "https://www.ubisoft.com/en-us/store",
+    "https://www.blizzard.com/en-us/games",
+    "https://www.nexon.com",
+    "https://www.square-enix-games.com/en_US/home",
+    "https://www.bungie.net/7/en/Destiny/Buy",
+    "https://www.wargaming.net",
+    "https://www.mmoga.com",
+    "https://www.gamersgate.com",
+    "https://www.voidu.com",
+
+    # Esports / gaming communities
+    "https://www.faceit.com",
+    "https://www.esea.net",
+    "https://www.battlenet.com.cn/en-us/",
 ]
 
 
@@ -544,6 +815,33 @@ FOOD_DELIVERY_URLS = [
     "https://www.homechef.com/pricing",
     "https://www.cookunity.com",
     "https://www.dailyharvest.com",
+
+    # --- Added: Expansion round 2 ---
+    # Grocery delivery
+    "https://www.freshdirect.com",
+    "https://www.peapod.com",
+    "https://www.shipt.com",
+    "https://www.thrive.market",
+    "https://www.misfitsmarket.com",
+    "https://www.imperfectfoods.com",
+
+    # Specialty food / drink
+    "https://www.drizly.com",
+    "https://www.vivino.com",
+    "https://www.wine.com",
+    "https://www.goldbelly.com",
+    "https://www.butcherbox.com",
+    "https://www.sakara.com",
+    "https://www.trifectanutrition.com",
+    "https://www.territoryfoods.com",
+    "https://www.splendidtable.org",
+
+    # Coffee / snack subscriptions
+    "https://www.tradecoffee.com",
+    "https://www.bluebottlecoffee.com",
+    "https://www.atlascoffeeclub.com",
+    "https://www.naturebox.com",
+    "https://www.urthbox.com",
 ]
 
 
@@ -587,6 +885,35 @@ FITNESS_HEALTH_URLS = [
     "https://www.classpass.com/pricing",
     "https://www.mindbodyonline.com",
     "https://www.fabletics.com/subscribe",
+
+    # --- Added: Expansion round 2 ---
+    # Wellness / supplements
+    "https://www.athleticgreens.com",
+    "https://www.onnit.com",
+    "https://www.gardenoflife.com",
+    "https://www.thorne.com",
+    "https://www.momentous.com",
+    "https://www.seedhealth.com",
+
+    # Telehealth / digital health
+    "https://www.teladoc.com",
+    "https://www.mdlive.com",
+    "https://www.amwell.com",
+    "https://www.getsana.com",
+    "https://www.sesamecare.com",
+    "https://www.zocdoc.com",
+
+    # Fitness wearables / apps
+    "https://www.withings.com",
+    "https://www.garmin.com/en-US/c/sports-fitness/",
+    "https://www.centr.com",
+
+    # Mental health / sleep
+    "https://www.sleepio.com",
+    "https://www.happify.com",
+    "https://www.ginger.com",
+    "https://www.lyrahealth.com",
+    "https://www.springhealth.com",
 ]
 
 
@@ -617,6 +944,23 @@ DATING_URLS = [
     "https://www.ourtime.com",
     "https://www.coffee-meets-bagel.com",
     "https://www.happn.com",
+
+    # --- Added: Expansion round 2 ---
+    "https://www.theleague.com",
+    "https://www.heybaby.com",
+    "https://www.feeld.co",
+    "https://www.her.app",
+    "https://www.grindr.com",
+    "https://www.scruff.com",
+    "https://www.christianmingle.com",
+    "https://www.jdate.com",
+    "https://www.muzmatch.com",
+    "https://www.raya.app",
+
+    # Niche dating
+    "https://www.seeking.com",
+    "https://www.taimi.com",
+    "https://www.badoo.com",
 ]
 
 
@@ -665,6 +1009,40 @@ FINANCE_URLS = [
     "https://www.discover.com/credit-cards/",
     "https://www.capitalone.com/credit-cards/",
     "https://www.citi.com/credit-cards/",
+
+    # --- Added: Expansion round 2 ---
+    # Crypto / investment
+    "https://www.kraken.com",
+    "https://www.binance.us",
+    "https://www.gemini.com",
+    "https://www.etoro.com",
+    "https://www.webull.com",
+    "https://www.moomoo.com",
+    "https://www.publicinvesting.com",
+    "https://www.stash.com",
+    "https://www.fundrise.com",
+
+    # Tax / financial planning
+    "https://www.freetaxusa.com",
+    "https://www.taxact.com",
+    "https://www.taxslayer.com",
+    "https://www.creditcards.com",
+    "https://www.wallethub.com",
+
+    # Banking / BNPL
+    "https://www.ally.com",
+    "https://www.varo.com",
+    "https://www.current.com",
+    "https://www.sezzle.com",
+    "https://www.zip.co",
+
+    # Insurance comparison / mortgage
+    "https://www.credible.com",
+    "https://www.rocketmortgage.com",
+    "https://www.better.com",
+    "https://www.loanDepot.com",
+    "https://www.prosper.com",
+    "https://www.upstart.com",
 ]
 
 
@@ -694,6 +1072,28 @@ TICKETING_URLS = [
     "https://www.telecharge.com",
     "https://www.goldstar.com",
     "https://www.dice.fm",
+
+    # --- Added: Expansion round 2 ---
+    "https://www.bandsintown.com",
+    "https://www.songkick.com",
+    "https://www.universe.com",
+    "https://www.tixr.com",
+    "https://www.showclix.com",
+    "https://www.etix.com",
+    "https://www.ticketnetwork.com",
+    "https://www.cheaptickets.com",
+    "https://www.ticketliquidator.com",
+    "https://www.megaseats.com",
+    "https://www.ticketsmarter.com",
+    "https://www.razorgator.com",
+    "https://www.todaytix.com",
+    "https://www.broadwaybox.com",
+    "https://www.headout.com",
+
+    # Sports-specific ticketing
+    "https://www.nflshop.com",
+    "https://www.nbatopshot.com",
+    "https://www.mlb.com/tickets",
 ]
 
 
@@ -729,6 +1129,28 @@ EDUCATION_PAID_URLS = [
     "https://www.outschool.com",
     "https://www.teachable.com/pricing",
     "https://www.thinkific.com/pricing/",
+
+    # --- Added: Expansion round 2 ---
+    "https://www.edclub.com",
+    "https://www.simplilearn.com",
+    "https://www.springboard.com",
+    "https://www.generalassemb.ly",
+    "https://www.brainly.com",
+    "https://www.studypool.com",
+    "https://www.wyzant.com",
+    "https://www.preply.com",
+    "https://www.italki.com",
+    "https://www.busuu.com",
+    "https://www.memrise.com",
+    "https://www.futurelearn.com",
+    "https://www.domestika.org",
+    "https://www.creativelive.com",
+    "https://www.podia.com/pricing",
+
+    # Professional certification
+    "https://www.pmi.org",
+    "https://www.comptia.org",
+    "https://www.coursera.org/google-certificates",
 ]
 
 
@@ -767,6 +1189,30 @@ TELECOM_URLS = [
     "https://www.directv.com/deals/",
     "https://www.hughesnet.com/internet",
     "https://www.starlink.com",
+
+    # --- Added: Expansion round 2 ---
+    "https://www.googlefi.com",
+    "https://www.usmobile.com",
+    "https://www.redditmobile.com",
+    "https://www.tello.com",
+    "https://www.lycamobile.us",
+    "https://www.straighttalk.com",
+    "https://www.tracfone.com",
+    "https://www.metrobyt-mobile.com",
+    "https://www.freedommobile.ca",
+    "https://www.fido.ca",
+    "https://www.koodo.com",
+    "https://www.bell.ca/Mobility",
+    "https://www.rogers.com/plans",
+    "https://www.three.co.uk",
+    "https://www.o2.co.uk",
+
+    # More international carriers
+    "https://www.vodafone.co.uk",
+    "https://www.ee.co.uk",
+    "https://www.telus.com",
+    "https://www.sky.com",
+    "https://www.bt.com/broadband",
 ]
 
 
@@ -802,6 +1248,33 @@ INSURANCE_URLS = [
     "https://www.healthmarkets.com",
     "https://www.coverhound.com",
     "https://www.root.com",
+
+    # --- Added: Expansion round 2 ---
+    # Pet insurance
+    "https://www.petsbest.com",
+    "https://www.embracepetinsurance.com",
+    "https://www.trupanion.com",
+    "https://www.healthy-paws.com",
+    "https://www.fetchpet.com",
+
+    # Home / renters / life
+    "https://www.hippo.com",
+    "https://www.haven.com",
+    "https://www.branch.com",
+    "https://www.fabric.com",
+    "https://www.bestow.com",
+    "https://www.ethos.com",
+    "https://www.ladderlife.com",
+    "https://www.selectquote.com",
+    "https://www.goosehead.com",
+    "https://www.comparenow.com",
+
+    # Travel / specialized insurance
+    "https://www.metlife.com",
+    "https://www.travelers.com",
+    "https://www.usaa.com/insurance",
+    "https://www.ameritas.com",
+    "https://www.amica.com",
 ]
 
 
@@ -840,6 +1313,35 @@ HOME_SERVICES_URLS = [
     "https://www.offerup.com",
     "https://www.craigslist.org",
     "https://www.nextdoor.com/for_sale/",
+
+    # --- Added: Expansion round 2 ---
+    # Moving / storage
+    "https://www.pods.com",
+    "https://www.uhaul.com",
+    "https://www.extraspace.com",
+    "https://www.publicstoragedeals.com",
+    "https://www.movinghelp.com",
+
+    # Cleaning / home
+    "https://www.mollymaids.com",
+    "https://www.merrymaids.com",
+    "https://www.servpro.com",
+    "https://www.homeaglow.com",
+    "https://www.lawnlove.com",
+
+    # Rental marketplace
+    "https://www.hotpads.com",
+    "https://www.zumper.com",
+    "https://www.rentcafe.com",
+    "https://www.padmapper.com",
+    "https://www.movoto.com",
+
+    # Furniture / home improvement
+    "https://www.homedepot.com",
+    "https://www.lowes.com",
+    "https://www.menards.com",
+    "https://www.acehardware.com",
+    "https://www.build.com",
 ]
 
 
@@ -891,6 +1393,49 @@ GOVERNMENT_URLS = [
     "https://www.sec.gov",
     "https://www.fcc.gov",
     "https://www.ed.gov",
+
+    # --- Added: Expansion round 2 ---
+    # EU institutions
+    "https://europa.eu",
+    "https://www.europarl.europa.eu",
+    "https://www.ecb.europa.eu",
+    # International government
+    "https://www.service-public.fr",
+    "https://www.bundesregierung.de/breg-en",
+    "https://www.governo.it",
+    "https://www.australia.gov.au",
+    "https://www.govt.nz",
+    "https://www.gov.za",
+    "https://www.india.gov.in",
+
+    # US state / local
+    "https://www.ny.gov",
+    "https://www.ca.gov",
+    "https://www.texas.gov",
+    "https://www.illinois.gov",
+
+    # More US federal
+    "https://www.dhs.gov",
+    "https://www.sba.gov",
+    "https://www.gsa.gov",
+    "https://www.opm.gov",
+    "https://www.va.gov",
+    "https://www.fema.gov",
+    "https://www.consumerfinance.gov",
+    "https://www.healthcare.gov",
+    "https://www.benefits.gov",
+
+    # More international
+    "https://www.gov.sg",
+    "https://www.riksdagen.se/en/",
+    "https://www.government.nl",
+
+    # More state government
+    "https://www.ohio.gov",
+    "https://www.michigan.gov",
+    "https://www.georgia.gov",
+    "https://www.colorado.gov",
+    "https://www.mass.gov",
 ]
 
 
@@ -934,6 +1479,41 @@ EDUCATION_URLS = [
     "https://www.jstor.org",
     "https://www.researchgate.net",
     "https://www.semanticscholar.org",
+
+    # --- Added: Expansion round 2 ---
+    # Universities
+    "https://www.ox.ac.uk",
+    "https://www.cam.ac.uk",
+    "https://www.caltech.edu",
+    "https://www.berkeley.edu",
+    "https://www.yale.edu",
+    "https://www.princeton.edu",
+    "https://www.columbia.edu",
+    "https://www.uchicago.edu",
+
+    # Research / libraries
+    "https://www.doaj.org",
+    "https://www.biorxiv.org",
+    "https://www.medrxiv.org",
+    "https://www.ssrn.com",
+    "https://dl.acm.org",
+    "https://ieeexplore.ieee.org",
+    "https://www.worldcat.org",
+    # Libraries / educational
+    "https://www.dpla.io",
+    "https://www.europeana.eu",
+    "https://www.biodiversitylibrary.org",
+    "https://www.hathitrust.org",
+    "https://www.jstor.org/open/",
+    "https://ocw.mit.edu/collections/",
+    "https://www.coursehero.com/free-courses/",
+
+    # More universities
+    "https://www.ethz.ch/en.html",
+    "https://www.epfl.ch/en/",
+    "https://www.tum.de/en/",
+    "https://www.anu.edu.au",
+    "https://www.utoronto.ca",
 ]
 
 
@@ -978,6 +1558,43 @@ NONPROFIT_OPENSOURCE_URLS = [
     "https://www.worldwildlife.org",
     "https://www.greenpeace.org/international/",
     "https://www.amnesty.org",
+
+    # --- Added: Expansion round 2 ---
+    # More foundations / charities
+    "https://www.gatesfoundation.org",
+    "https://www.fordfoundation.org",
+    "https://www.rockefellerfoundation.org",
+    "https://www.macfound.org",
+    "https://www.hewlett.org",
+    "https://www.oxfam.org",
+    "https://www.savethechildren.org",
+    "https://www.care.org",
+    "https://www.directrelief.org",
+    "https://www.feedingamerica.org",
+
+    # Open source projects
+    "https://www.eclipse.org",
+    "https://www.cncf.io",
+    "https://www.openbsd.org",
+    "https://www.freebsd.org",
+    "https://www.gnome.org",
+    "https://kde.org",
+    "https://www.blender.org",
+    "https://www.gimp.org",
+    "https://www.vlcplayer.org",
+    "https://www.audacityteam.org",
+    "https://www.inkscape.org",
+    "https://www.scribus.net",
+    "https://calibre-ebook.com",
+    "https://www.openstreetmap.org/about",
+    "https://www.letsencrypt.org",
+
+    # More charities
+    "https://www.wfp.org",
+    "https://www.unhcr.org",
+    "https://www.msf.org",
+    "https://www.nature.org",
+    "https://www.aclu.org",
 ]
 
 
@@ -1036,6 +1653,34 @@ DEVELOPER_URLS = [
     "https://nextjs.org/docs",
     "https://svelte.dev/docs",
     "https://angular.io/docs",
+
+    # --- Added: Expansion round 2 ---
+    # More programming languages / docs
+    "https://www.haskell.org",
+    "https://elixir-lang.org",
+    "https://www.scala-lang.org",
+    "https://kotlinlang.org",
+    "https://www.swift.org",
+    "https://ziglang.org",
+    "https://julialang.org",
+    "https://clojure.org",
+
+    # More developer tools / docs
+    "https://www.terraform.io/docs",
+    "https://www.ansible.com/resources",
+    "https://prometheus.io/docs/",
+    "https://grafana.com/docs/",
+    "https://www.rabbitmq.com/docs",
+    "https://kafka.apache.org/documentation/",
+    "https://www.elastic.co/guide/",
+    "https://www.mongodb.com/docs/",
+    "https://vitejs.dev",
+    "https://astro.build/docs",
+    "https://remix.run/docs",
+    "https://www.prisma.io/docs",
+    "https://supabase.com/docs",
+    "https://pnpm.io",
+    "https://deno.land/manual",
 ]
 
 
@@ -1086,6 +1731,43 @@ ETHICAL_URLS = [
     "https://obsidian.md/pricing",
     "https://logseq.com",
     "https://joplinapp.org",
+
+    # --- Added: Expansion round 2 ---
+    # More privacy-focused / sustainable
+    "https://www.startpage.com",
+    "https://www.qwant.com",
+    "https://www.ecosia.org",
+    "https://www.braveSearch.com",
+    "https://www.posteo.de/en",
+    "https://www.disroot.org",
+    "https://www.cryptpad.org",
+    "https://www.nextcloud.com",
+    "https://www.wireguard.com",
+    "https://www.keepassxc.org",
+
+    # Sustainable / ethical companies
+    "https://www.allbirds.com",
+    "https://www.tentree.com",
+    "https://www.eileen-fisher.com",
+    "https://www.tomshoes.com",
+    "https://www.drbronnerssuds.com",
+    "https://www.seventhgeneration.com",
+    "https://www.grove.co",
+    "https://www.thinkpenguin.com",
+    "https://www.ifixit.com",
+    "https://www.buymeacoffee.com",
+
+    # More ethical tech
+    "https://www.lineageos.org",
+    "https://www.f-droid.org",
+    "https://www.calyx.institute.org",
+    "https://www.torproject.org",
+    "https://tailscale.com",
+
+    # More sustainable brands
+    "https://www.who-gives-a-crap.com",
+    "https://www.pela.earth",
+    "https://www.naadam.co",
 ]
 
 
@@ -1138,6 +1820,53 @@ UTILITY_URLS = [
     "https://www.glassdoor.com",
     "https://www.indeed.com",
     "https://www.bls.gov",
+
+    # --- Added: Expansion round 2 ---
+    # Reference / dictionaries
+    "https://www.dictionary.com",
+    "https://www.thesaurus.com",
+    "https://www.vocabulary.com",
+    "https://www.britannica.com",
+    "https://www.infoplease.com",
+
+    # Health / medical reference
+    "https://www.clevelandclinic.org",
+    "https://www.hopkinsmedicine.org",
+    "https://www.mountsinai.org/health-library",
+    "https://www.nhs.uk",
+    "https://www.uptodate.com",
+
+    # Calculators / tools
+    "https://www.desmos.com",
+    "https://www.symbolab.com",
+    "https://www.mathway.com",
+    "https://www.unitconverters.net",
+    "https://www.rapidtables.com",
+
+    # Data / statistics
+    "https://ourworldindata.org",
+    "https://www.gapminder.org",
+    "https://datausa.io",
+    "https://data.worldbank.org",
+    "https://www.statista.com",
+    "https://fred.stlouisfed.org",
+    "https://trends.google.com",
+    "https://www.similarweb.com",
+    "https://www.archive.org/details/tv",
+
+    # More reference
+    "https://www.acronymfinder.com",
+    "https://www.abbreviations.com",
+    "https://www.almanac.com",
+    "https://www.usgs.gov",
+    "https://earthquake.usgs.gov",
+
+    # Food / cooking reference
+    "https://www.seriouseats.com",
+    "https://www.foodnetwork.com",
+    "https://www.epicurious.com",
+    "https://www.simplyrecipes.com",
+    "https://www.budgetbytes.com",
 ]
 
 
@@ -1181,6 +1910,45 @@ PUBLIC_TOOLS_URLS = [
     "https://replit.com",
     "https://codesandbox.io",
     "https://stackblitz.com",
+
+    # --- Added: Expansion round 2 ---
+    # Standards bodies / registries
+    "https://www.rfc-editor.org",
+    "https://www.icann.org",
+    "https://www.w3.org/WAI/",
+    "https://www.ecma-international.org",
+    "https://tc39.es",
+
+    # Free online tools
+    "https://www.photopea.com",
+    "https://www.canva.com/free/",
+    "https://app.diagrams.net",
+    "https://www.overleaf.com/learn",
+    "https://www.deepl.com/translator",
+    "https://alternativeto.net",
+    "https://www.virustotal.com",
+    "https://haveibeenpwned.com",
+    "https://www.ssllabs.com/ssltest/",
+    "https://observatory.mozilla.org",
+
+    # Code playgrounds / learning
+    "https://www.typingclub.com",
+    "https://exercism.org",
+    "https://leetcode.com",
+    "https://www.hackerrank.com",
+    "https://www.freecodecamp.org",
+    "https://glitch.com",
+    "https://observablehq.com",
+    "https://www.shadertoy.com",
+    "https://play.rust-lang.org",
+    "https://goplay.tools",
+
+    # More free tools
+    "https://jsonformatter.org",
+    "https://www.base64decode.org",
+    "https://crontab.guru",
+    "https://explainshell.com",
+    "https://www.diffchecker.com",
 ]
 
 

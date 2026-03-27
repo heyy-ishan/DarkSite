@@ -1,38 +1,39 @@
 # train.py
 # Phase 3: Training Pipeline for Dark Pattern Detection Model
 #
-# Trains the multi-modal model (ViT + RoBERTa + MLP + attention fusion)
-# with multi-task outputs (binary + multi-label + severity).
-#
-# SETUP:
-#   pip install torch torchvision transformers scikit-learn Pillow
+# Publication-ready training with:
+#   - Domain-level train/val/test split (no data leakage)
+#   - Class-weighted loss for imbalanced labels
+#   - Confidence-weighted training
+#   - Early stopping with patience
+#   - LR warmup + cosine annealing
+#   - Mixed precision (AMP) support
+#   - Multi-seed reproducibility
+#   - Ablation mode (disable branches)
+#   - Enhanced metrics (ROC-AUC, confusion matrix, attention analysis)
+#   - Held-out test set evaluation
 #
 # USAGE:
-#   python train.py                          # Train with defaults
-#   python train.py --epochs 30 --batch 16   # Custom settings
-#   python train.py --resume checkpoint.pt   # Resume from checkpoint
-#
-# For Google Colab:
-#   1. Upload data/ folder to Google Drive
-#   2. Mount drive in Colab
-#   3. Set --data-dir and --label-dir to your Drive paths
-#   4. Run this script
+#   python train.py                                    # Train with defaults
+#   python train.py --epochs 30 --batch-size 16        # Custom settings
+#   python train.py --disable-branches visual,structural  # Text-only ablation
+#   python train.py --seed 123 --amp                   # Different seed + AMP
 
 import sys
 import json
 import time
+import random
 import logging
 import argparse
 from pathlib import Path
 from datetime import datetime
 
+import numpy as np
 import torch
-
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, LinearLR, SequentialLR
 from transformers import RobertaTokenizer
 
-# Local imports
 from dataset import (
     create_dataloaders,
     DARK_PATTERN_TYPES,
@@ -49,20 +50,61 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 # ============================================================================
+# SEED + CLASS WEIGHTS
+# ============================================================================
+
+def set_seed(seed):
+    """Set all random seeds for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    logger.info(f"Random seed set to {seed}")
+
+
+def compute_class_weights(train_loader):
+    """
+    Scan training data to compute class weights for imbalanced labels.
+
+    Returns:
+        type_pos_weights: Tensor [11] — pos_weight for BCE on type head
+        severity_weights: Tensor [4]  — class weight for CE on severity head
+    """
+    type_counts = torch.zeros(NUM_TYPES)
+    severity_counts = torch.zeros(NUM_SEVERITY)
+    total = 0
+
+    for batch in train_loader:
+        type_labels = batch["type_labels"]
+        severity_labels = batch["severity_label"]
+
+        type_counts += type_labels.sum(dim=0)
+        for s in severity_labels.squeeze(1):
+            severity_counts[s.item()] += 1
+        total += type_labels.size(0)
+
+    # pos_weight: num_negative / num_positive, capped at 10
+    type_pos_weights = torch.clamp((total - type_counts) / (type_counts + 1), max=10.0)
+
+    # severity weight: total / (num_classes * count)
+    severity_weights = total / (NUM_SEVERITY * (severity_counts + 1))
+
+    logger.info(f"Type pos_weights: {dict(zip(DARK_PATTERN_TYPES, [f'{w:.2f}' for w in type_pos_weights.tolist()]))}")
+    logger.info(f"Severity weights: {dict(zip(SEVERITY_LEVELS, [f'{w:.2f}' for w in severity_weights.tolist()]))}")
+
+    return type_pos_weights, severity_weights
+
+
+# ============================================================================
 # METRICS
 # ============================================================================
 
-def compute_metrics(all_preds, all_labels, threshold=0.5):
+def compute_metrics(all_preds, all_labels, threshold=0.5, attention_weights=None):
     """
     Compute evaluation metrics for all three tasks.
-
-    Args:
-        all_preds: dict with binary_logits, type_logits, severity_logits (concatenated tensors)
-        all_labels: dict with binary, types, severity (concatenated tensors)
-        threshold: Threshold for binary/multi-label predictions
-
-    Returns:
-        dict with accuracy, F1, precision, recall per task
+    Includes ROC-AUC, per-type P/R/F1, severity confusion matrix, attention analysis.
     """
     metrics = {}
 
@@ -84,7 +126,17 @@ def compute_metrics(all_preds, all_labels, threshold=0.5):
         max(metrics["binary_precision"] + metrics["binary_recall"], 1e-8)
     )
 
-    # --- Multi-label metrics (per-type and macro-average) ---
+    # ROC-AUC
+    try:
+        from sklearn.metrics import roc_auc_score
+        if len(set(binary_true.squeeze().tolist())) > 1:
+            metrics["binary_roc_auc"] = roc_auc_score(
+                binary_true.squeeze().numpy(), binary_probs.squeeze().numpy()
+            )
+    except Exception:
+        pass
+
+    # --- Multi-label metrics (per-type P/R/F1) ---
     type_probs = torch.sigmoid(all_preds["types"]).cpu()
     type_pred = (type_probs >= threshold).float()
     type_true = all_labels["types"].cpu()
@@ -99,13 +151,14 @@ def compute_metrics(all_preds, all_labels, threshold=0.5):
         rec = tp_i / max(tp_i + fn_i, 1)
         f1 = 2 * prec * rec / max(prec + rec, 1e-8) if (tp_i + fp_i + fn_i) > 0 else 0.0
 
+        metrics[f"type_{type_name}_precision"] = prec
+        metrics[f"type_{type_name}_recall"] = rec
         metrics[f"type_{type_name}_f1"] = f1
-        if (tp_i + fp_i + fn_i) > 0:  # only include types that actually appear
+        if (tp_i + fp_i + fn_i) > 0:
             type_f1s.append(f1)
 
     metrics["type_macro_f1"] = sum(type_f1s) / max(len(type_f1s), 1)
 
-    # Sample-level metrics for multi-label
     correct_per_sample = (type_pred == type_true).float().mean(dim=1)
     metrics["type_sample_accuracy"] = correct_per_sample.mean().item()
 
@@ -115,11 +168,32 @@ def compute_metrics(all_preds, all_labels, threshold=0.5):
 
     metrics["severity_accuracy"] = (severity_pred == severity_true).float().mean().item()
 
-    # Per-class severity accuracy
+    # Confusion matrix
+    confusion = [[0] * NUM_SEVERITY for _ in range(NUM_SEVERITY)]
+    for true_i, pred_i in zip(severity_true.tolist(), severity_pred.tolist()):
+        confusion[int(true_i)][int(pred_i)] += 1
+    metrics["severity_confusion_matrix"] = confusion
+
     for i, sev_name in enumerate(SEVERITY_LEVELS):
         mask = severity_true == i
         if mask.sum() > 0:
             metrics[f"severity_{sev_name}_acc"] = (severity_pred[mask] == i).float().mean().item()
+
+    # --- Attention weights analysis ---
+    if attention_weights is not None:
+        try:
+            # attention_weights shape varies: [batch, 3, 3] or [batch, heads, 3, 3]
+            # Average over all dims except the last two to get [3, 3]
+            while attention_weights.dim() > 2:
+                attention_weights = attention_weights.mean(dim=0)
+            # avg_attn is now [3, 3]: how much each token attends to each other
+            modality_importance = attention_weights.sum(dim=0)  # column sum = how much each modality is attended to
+            modality_importance = modality_importance / modality_importance.sum()
+            metrics["attention_visual"] = modality_importance[0].item()
+            metrics["attention_text"] = modality_importance[1].item()
+            metrics["attention_structural"] = modality_importance[2].item()
+        except Exception:
+            pass  # skip attention analysis if shape is unexpected
 
     return metrics
 
@@ -128,8 +202,9 @@ def compute_metrics(all_preds, all_labels, threshold=0.5):
 # TRAINING STEP
 # ============================================================================
 
-def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch):
-    """Run one training epoch."""
+def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch,
+                    scaler=None):
+    """Run one training epoch. Supports AMP via scaler."""
     model.train()
 
     total_loss = 0.0
@@ -137,7 +212,6 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch):
     num_batches = 0
 
     for batch_idx, batch in enumerate(train_loader):
-        # Move to device
         image = batch["image"].to(device)
         input_ids = batch["input_ids"].to(device)
         attention_mask = batch["attention_mask"].to(device)
@@ -145,24 +219,35 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch):
         binary_label = batch["binary_label"].to(device)
         type_labels = batch["type_labels"].to(device)
         severity_label = batch["severity_label"].to(device)
+        confidence = batch["confidence"].to(device)
 
-        # Forward
-        outputs = model(image, input_ids, attention_mask, structural)
-
-        # Loss
-        loss, loss_dict = criterion(
-            outputs["binary_logits"], outputs["type_logits"], outputs["severity_logits"],
-            binary_label, type_labels, severity_label,
-        )
-
-        # Backward
         optimizer.zero_grad()
-        loss.backward()
 
-        # Gradient clipping
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-
-        optimizer.step()
+        if scaler is not None:
+            with torch.amp.autocast("cuda"):
+                outputs = model(image, input_ids, attention_mask, structural)
+                loss, loss_dict = criterion(
+                    outputs["binary_logits"], outputs["type_logits"],
+                    outputs["severity_logits"],
+                    binary_label, type_labels, severity_label,
+                    sample_weights=confidence,
+                )
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            outputs = model(image, input_ids, attention_mask, structural)
+            loss, loss_dict = criterion(
+                outputs["binary_logits"], outputs["type_logits"],
+                outputs["severity_logits"],
+                binary_label, type_labels, severity_label,
+                sample_weights=confidence,
+            )
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
 
         total_loss += loss_dict["total"]
         loss_components["binary"] += loss_dict["binary"]
@@ -191,7 +276,7 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch):
 
 @torch.no_grad()
 def validate(model, val_loader, criterion, device):
-    """Run validation and compute metrics."""
+    """Run validation and compute metrics including attention analysis."""
     model.eval()
 
     total_loss = 0.0
@@ -199,6 +284,7 @@ def validate(model, val_loader, criterion, device):
 
     all_preds = {"binary": [], "types": [], "severity": []}
     all_labels = {"binary": [], "types": [], "severity": []}
+    all_attention = []
 
     for batch in val_loader:
         image = batch["image"].to(device)
@@ -208,18 +294,20 @@ def validate(model, val_loader, criterion, device):
         binary_label = batch["binary_label"].to(device)
         type_labels = batch["type_labels"].to(device)
         severity_label = batch["severity_label"].to(device)
+        confidence = batch["confidence"].to(device)
 
         outputs = model(image, input_ids, attention_mask, structural)
 
         loss, loss_dict = criterion(
-            outputs["binary_logits"], outputs["type_logits"], outputs["severity_logits"],
+            outputs["binary_logits"], outputs["type_logits"],
+            outputs["severity_logits"],
             binary_label, type_labels, severity_label,
+            sample_weights=confidence,
         )
 
         total_loss += loss_dict["total"]
         num_batches += 1
 
-        # Collect predictions
         all_preds["binary"].append(outputs["binary_logits"])
         all_preds["types"].append(outputs["type_logits"])
         all_preds["severity"].append(outputs["severity_logits"])
@@ -228,13 +316,17 @@ def validate(model, val_loader, criterion, device):
         all_labels["types"].append(type_labels)
         all_labels["severity"].append(severity_label)
 
-    # Concatenate all batches
+        if outputs.get("attention_weights") is not None:
+            all_attention.append(outputs["attention_weights"].cpu())
+
     for key in all_preds:
         all_preds[key] = torch.cat(all_preds[key], dim=0)
         all_labels[key] = torch.cat(all_labels[key], dim=0)
 
+    attn = torch.cat(all_attention, dim=0) if all_attention else None
+
     avg_loss = total_loss / max(num_batches, 1)
-    metrics = compute_metrics(all_preds, all_labels)
+    metrics = compute_metrics(all_preds, all_labels, attention_weights=attn)
 
     return avg_loss, metrics
 
@@ -244,14 +336,13 @@ def validate(model, val_loader, criterion, device):
 # ============================================================================
 
 def save_checkpoint(model, optimizer, scheduler, criterion, epoch, metrics, path):
-    """Save training checkpoint."""
     checkpoint = {
         "epoch": epoch,
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
         "criterion_state_dict": criterion.state_dict(),
-        "metrics": metrics,
+        "metrics": {k: v for k, v in metrics.items() if not isinstance(v, list)},
         "timestamp": datetime.now().isoformat(),
     }
     torch.save(checkpoint, path)
@@ -259,7 +350,6 @@ def save_checkpoint(model, optimizer, scheduler, criterion, epoch, metrics, path
 
 
 def load_checkpoint(path, model, optimizer=None, scheduler=None, criterion=None):
-    """Load training checkpoint."""
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])
     if optimizer and "optimizer_state_dict" in checkpoint:
@@ -277,15 +367,18 @@ def load_checkpoint(path, model, optimizer=None, scheduler=None, criterion=None)
 # ============================================================================
 
 def train(args):
-    """Full training pipeline."""
+    """Full training pipeline with early stopping, warmup, AMP, multi-seed."""
 
-    # --- Setup ---
+    # --- Seed ---
+    set_seed(args.seed)
+
+    # --- Device ---
     device = torch.device("cuda" if torch.cuda.is_available() else
                           "mps" if torch.backends.mps.is_available() else "cpu")
     logger.info(f"Device: {device}")
 
-    # Output directory
-    output_dir = Path(args.output_dir)
+    # Output directory includes seed
+    output_dir = Path(args.output_dir) / f"seed_{args.seed}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # --- Tokenizer ---
@@ -294,18 +387,31 @@ def train(args):
 
     # --- Data ---
     logger.info("Creating dataloaders...")
-    train_loader, val_loader, dataset_info = create_dataloaders(
+    train_loader, val_loader, test_loader, dataset_info = create_dataloaders(
         tokenizer=tokenizer,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         data_dir=args.data_dir,
         label_dir=args.label_dir,
         use_yada=not args.no_yada,
+        seed=args.seed,
     )
 
     if dataset_info["num_train"] == 0:
-        logger.error("No training data found. Check data_dir and label_dir paths.")
+        logger.error("No training data found. Exiting.")
         sys.exit(1)
+
+    # --- Class weights ---
+    logger.info("Computing class weights from training data...")
+    type_pos_weights, severity_weights = compute_class_weights(train_loader)
+    type_pos_weights = type_pos_weights.to(device)
+    severity_weights = severity_weights.to(device)
+
+    # --- Parse disable_branches ---
+    disable_branches = []
+    if args.disable_branches:
+        disable_branches = [b.strip() for b in args.disable_branches.split(",")]
+        logger.info(f"Ablation mode: disabled branches = {disable_branches}")
 
     # --- Model ---
     logger.info("Building model...")
@@ -315,6 +421,7 @@ def train(args):
         num_severity=NUM_SEVERITY,
         freeze_backbone_layers=args.freeze_layers,
         dropout=args.dropout,
+        disable_branches=disable_branches,
     )
 
     param_info = model.get_trainable_params()
@@ -324,66 +431,80 @@ def train(args):
     model = model.to(device)
 
     # --- Loss ---
-    criterion = MultiTaskLoss().to(device)
+    criterion = MultiTaskLoss(
+        type_pos_weights=type_pos_weights,
+        severity_weights=severity_weights,
+    ).to(device)
 
-    # --- Optimizer (differential learning rates) ---
+    # --- Optimizer ---
     param_groups = model.get_param_groups(
         lr_backbone=args.lr_backbone,
         lr_new=args.lr_new,
     )
-    # Add criterion parameters (learnable task weights)
     param_groups.append({"params": criterion.parameters(), "lr": args.lr_new})
-
     optimizer = AdamW(param_groups, weight_decay=args.weight_decay)
 
-    # --- Scheduler ---
-    scheduler = CosineAnnealingWarmRestarts(
+    # --- Scheduler with warmup ---
+    warmup_epochs = 2
+    warmup_scheduler = LinearLR(
+        optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs
+    )
+    cosine_scheduler = CosineAnnealingWarmRestarts(
         optimizer,
-        T_0=args.epochs // 3 + 1,    # restart period
-        T_mult=2,                      # double period after each restart
+        T_0=max(args.epochs // 3, 1),
+        T_mult=2,
         eta_min=1e-7,
     )
+    scheduler = SequentialLR(
+        optimizer,
+        schedulers=[warmup_scheduler, cosine_scheduler],
+        milestones=[warmup_epochs],
+    )
 
-    # --- Resume from checkpoint ---
+    # --- AMP ---
+    scaler = None
+    if args.amp and device.type == "cuda":
+        scaler = torch.amp.GradScaler("cuda")
+        logger.info("Mixed precision (AMP) enabled")
+
+    # --- Resume ---
     start_epoch = 0
     if args.resume:
         start_epoch = load_checkpoint(
             args.resume, model, optimizer, scheduler, criterion
         ) + 1
-        logger.info(f"Resuming from epoch {start_epoch}")
 
-    # --- Training log ---
+    # --- Training state ---
     training_log = {
         "args": vars(args),
         "dataset": dataset_info,
         "params": param_info,
         "device": str(device),
+        "disable_branches": disable_branches,
         "epochs": [],
     }
 
     best_val_f1 = 0.0
+    patience_counter = 0
     val_metrics = {}
 
     # --- Training loop ---
-    logger.info(f"\nStarting training for {args.epochs} epochs...")
-    logger.info(f"Train: {dataset_info['num_train']} | Val: {dataset_info['num_val']}")
-    logger.info(f"Batch size: {args.batch_size} | LR backbone: {args.lr_backbone} | LR new: {args.lr_new}")
-    logger.info("")
+    logger.info(f"\nTraining for up to {args.epochs} epochs (patience={args.patience})...")
+    logger.info(f"Train: {dataset_info['num_train']} | Val: {dataset_info['num_val']} | "
+                f"Test: {dataset_info['num_test']}")
 
     for epoch in range(start_epoch, args.epochs):
         epoch_start = time.time()
 
-        # Train
         logger.info(f"Epoch {epoch + 1}/{args.epochs}")
         train_loss, train_components = train_one_epoch(
-            model, train_loader, criterion, optimizer, device, epoch + 1
+            model, train_loader, criterion, optimizer, device, epoch + 1,
+            scaler=scaler,
         )
 
-        # Validate
         val_loss, val_metrics = validate(model, val_loader, criterion, device)
 
-        # Step scheduler with explicit epoch for correct resume behavior
-        scheduler.step(epoch)
+        scheduler.step()
 
         epoch_time = time.time() - epoch_start
 
@@ -397,38 +518,49 @@ def train(args):
             f"f1={val_metrics['binary_f1']:.3f} "
             f"p={val_metrics['binary_precision']:.3f} "
             f"r={val_metrics['binary_recall']:.3f}"
+            + (f" auc={val_metrics['binary_roc_auc']:.3f}" if "binary_roc_auc" in val_metrics else "")
         )
         logger.info(
             f"  Types:  macro_f1={val_metrics['type_macro_f1']:.3f} "
             f"sample_acc={val_metrics['type_sample_accuracy']:.3f}"
         )
-        logger.info(
-            f"  Severity: acc={val_metrics['severity_accuracy']:.3f}"
-        )
+        logger.info(f"  Severity: acc={val_metrics['severity_accuracy']:.3f}")
+        if "attention_visual" in val_metrics:
+            logger.info(
+                f"  Attention: visual={val_metrics['attention_visual']:.3f} "
+                f"text={val_metrics['attention_text']:.3f} "
+                f"structural={val_metrics['attention_structural']:.3f}"
+            )
 
-        # Save to training log
         epoch_log = {
             "epoch": epoch + 1,
             "train_loss": train_loss,
             "train_components": train_components,
             "val_loss": val_loss,
-            "val_metrics": val_metrics,
+            "val_metrics": {k: v for k, v in val_metrics.items()
+                           if not isinstance(v, list)},
             "epoch_time": epoch_time,
             "lr": optimizer.param_groups[0]["lr"],
         }
         training_log["epochs"].append(epoch_log)
 
-        # Save best model
+        # Best model + early stopping
         current_f1 = val_metrics["binary_f1"]
         if current_f1 > best_val_f1:
             best_val_f1 = current_f1
+            patience_counter = 0
             save_checkpoint(
                 model, optimizer, scheduler, criterion, epoch,
                 val_metrics, output_dir / "best_model.pt"
             )
-            logger.info(f"  New best model! Binary F1: {best_val_f1:.4f}")
+            logger.info(f"  New best! Binary F1: {best_val_f1:.4f}")
+        else:
+            patience_counter += 1
+            logger.info(f"  No improvement ({patience_counter}/{args.patience})")
+            if patience_counter >= args.patience:
+                logger.info(f"  Early stopping at epoch {epoch + 1}")
+                break
 
-        # Save periodic checkpoint
         if (epoch + 1) % args.save_every == 0:
             save_checkpoint(
                 model, optimizer, scheduler, criterion, epoch,
@@ -441,20 +573,32 @@ def train(args):
             model, optimizer, scheduler, criterion, args.epochs - 1,
             val_metrics, output_dir / "final_model.pt"
         )
-    else:
-        logger.warning("No training epochs ran — skipping final checkpoint save.")
 
-    # Save training log
     log_path = output_dir / "training_log.json"
     with open(log_path, "w") as f:
         json.dump(training_log, f, indent=2, default=str)
-    logger.info(f"\nTraining log saved to {log_path}")
 
-    # --- Print final summary ---
+    # --- Test evaluation ---
+    if test_loader is not None and len(test_loader) > 0:
+        logger.info("\nEvaluating on held-out test set...")
+        best_ckpt = output_dir / "best_model.pt"
+        if best_ckpt.exists():
+            load_checkpoint(best_ckpt, model)
+        test_loss, test_metrics = validate(model, test_loader, criterion, device)
+        logger.info(f"TEST Binary F1: {test_metrics['binary_f1']:.4f} | "
+                    f"Type Macro F1: {test_metrics['type_macro_f1']:.4f} | "
+                    f"Severity Acc: {test_metrics['severity_accuracy']:.4f}")
+        test_results = {
+            "test_loss": test_loss,
+            "test_metrics": test_metrics,
+            "best_val_f1": best_val_f1,
+        }
+        with open(output_dir / "test_results.json", "w") as f:
+            json.dump(test_results, f, indent=2, default=str)
+
     logger.info("\n" + "=" * 60)
     logger.info("TRAINING COMPLETE")
-    logger.info("=" * 60)
-    logger.info(f"Best Binary F1: {best_val_f1:.4f}")
+    logger.info(f"Best Val Binary F1: {best_val_f1:.4f}")
     logger.info(f"Models saved to: {output_dir}")
     logger.info("=" * 60)
 
@@ -489,37 +633,37 @@ def main():
     parser = argparse.ArgumentParser(description="Train dark pattern detection model")
 
     # Data
-    parser.add_argument("--data-dir", type=str, default=None,
-                        help="Path to data/raw/ (default: auto-detect)")
-    parser.add_argument("--label-dir", type=str, default=None,
-                        help="Path to data/labeled/ (default: auto-detect)")
+    parser.add_argument("--data-dir", type=str, default=None)
+    parser.add_argument("--label-dir", type=str, default=None)
     parser.add_argument("--output-dir", type=str,
-                        default=str(PROJECT_ROOT / "models"),
-                        help="Where to save model checkpoints")
+                        default=str(PROJECT_ROOT / "models"))
 
     # External datasets
     parser.add_argument("--no-yada", action="store_true",
-                        help="Exclude Yada et al. text dataset")
+                        help="Exclude Yada text dataset")
+
+    # Ablation
+    parser.add_argument("--disable-branches", type=str, default=None,
+                        help="Comma-separated branches to disable: visual,text,structural")
 
     # Training
-    parser.add_argument("--epochs", type=int, default=20, help="Number of epochs")
-    parser.add_argument("--batch-size", type=int, default=8, help="Batch size")
-    parser.add_argument("--lr-backbone", type=float, default=1e-5,
-                        help="Learning rate for pre-trained ViT/RoBERTa layers")
-    parser.add_argument("--lr-new", type=float, default=1e-4,
-                        help="Learning rate for new layers (fusion, heads, structural)")
+    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--lr-backbone", type=float, default=1e-5)
+    parser.add_argument("--lr-new", type=float, default=1e-4)
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--dropout", type=float, default=0.2)
-    parser.add_argument("--freeze-layers", type=int, default=8,
-                        help="Freeze first N layers of ViT/RoBERTa (out of 12)")
+    parser.add_argument("--freeze-layers", type=int, default=8)
+    parser.add_argument("--patience", type=int, default=7,
+                        help="Early stopping patience (epochs)")
+    parser.add_argument("--seed", type=int, default=42)
 
     # System
-    parser.add_argument("--num-workers", type=int, default=2,
-                        help="Dataloader workers")
-    parser.add_argument("--save-every", type=int, default=5,
-                        help="Save checkpoint every N epochs")
-    parser.add_argument("--resume", type=str, default=None,
-                        help="Path to checkpoint to resume from")
+    parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--save-every", type=int, default=5)
+    parser.add_argument("--resume", type=str, default=None)
+    parser.add_argument("--amp", action="store_true",
+                        help="Enable mixed precision training")
 
     args = parser.parse_args()
 
@@ -529,8 +673,9 @@ def main():
     logger.info("DARK PATTERN DETECTION — MODEL TRAINING")
     logger.info("=" * 60)
     logger.info(f"Config: epochs={args.epochs}, batch={args.batch_size}, "
-                f"lr_backbone={args.lr_backbone}, lr_new={args.lr_new}")
-    logger.info(f"Frozen layers: {args.freeze_layers}/12")
+                f"lr_backbone={args.lr_backbone}, lr_new={args.lr_new}, seed={args.seed}")
+    if args.disable_branches:
+        logger.info(f"Ablation: disabled={args.disable_branches}")
     logger.info("")
 
     train(args)
