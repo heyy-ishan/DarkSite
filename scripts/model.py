@@ -75,16 +75,14 @@ class CrossModalAttention(nn.Module):
             nn.Dropout(dropout),
         )
 
-    def forward(self, visual_feat, text_feat, structural_feat):
-        
-        #Args:
-        #    visual_feat: Tensor [batch, 768]
-        #    text_feat: Tensor [batch, 768]
-        #    structural_feat: Tensor [batch, 768]
-        
-        #Returns:
-        #    Tensor [batch, 768] — fused representation
-        
+    def forward(self, visual_feat, text_feat, structural_feat, key_padding_mask=None):
+        """
+        Args:
+            visual_feat, text_feat, structural_feat: [batch, 768]
+            key_padding_mask: optional [batch, 3] bool. True = ignore (disabled modality).
+        Returns:
+            fused [batch, 768], attn_weights [batch, 3, 3] (averaged over heads)
+        """
         batch_size = visual_feat.size(0)
 
         # Stack into sequence: [batch, 3, 768]
@@ -94,13 +92,26 @@ class CrossModalAttention(nn.Module):
         modality_ids = torch.arange(3, device=sequence.device).unsqueeze(0).expand(batch_size, -1)
         sequence = sequence + self.modality_embeddings(modality_ids)
 
-        # Self-attention (transformer block)
-        attended, attn_weights = self.attention(sequence, sequence, sequence)
+        # Self-attention with optional key_padding_mask (masked tokens contribute 0)
+        attended, attn_weights = self.attention(
+            sequence, sequence, sequence,
+            key_padding_mask=key_padding_mask,
+            need_weights=True,
+            average_attn_weights=True,
+        )
+        # Shape invariant: averaged head weights → [batch, 3, 3]
+        assert attn_weights.shape == (batch_size, 3, 3), \
+            f"attn_weights shape mismatch: {attn_weights.shape}"
+
         sequence = self.norm1(sequence + attended)
         sequence = self.norm2(sequence + self.ffn(sequence))
 
-        # Pool: mean over the 3 modality tokens → single vector
-        fused = sequence.mean(dim=1)  # [batch, 768]
+        # Pool: weighted mean over UNMASKED modality tokens
+        if key_padding_mask is not None:
+            keep = (~key_padding_mask).unsqueeze(-1).to(sequence.dtype)  # [batch, 3, 1]
+            fused = (sequence * keep).sum(dim=1) / keep.sum(dim=1).clamp_min(1.0)
+        else:
+            fused = sequence.mean(dim=1)
 
         return fused, attn_weights
 
@@ -266,6 +277,18 @@ class DarkPatternDetector(nn.Module):
         batch_size = image.size(0)
         device = image.device
 
+        # Build per-modality disabled mask (True = ignored by fusion attention)
+        disabled = [
+            "visual" in self.disable_branches,
+            "text" in self.disable_branches,
+            "structural" in self.disable_branches,
+        ]
+        if any(disabled):
+            key_padding_mask = torch.tensor(disabled, dtype=torch.bool, device=device)
+            key_padding_mask = key_padding_mask.unsqueeze(0).expand(batch_size, -1)
+        else:
+            key_padding_mask = None
+
         # --- Branch 1: Visual (ViT) ---
         if self.vit is not None:
             vit_output = self.vit(pixel_values=image)
@@ -286,8 +309,11 @@ class DarkPatternDetector(nn.Module):
         else:
             structural_feat = torch.zeros(batch_size, self.embed_dim, device=device)
 
-        # --- Fusion ---
-        fused, attn_weights = self.fusion(visual_feat, text_feat, structural_feat)
+        # --- Fusion (masks out disabled branches) ---
+        fused, attn_weights = self.fusion(
+            visual_feat, text_feat, structural_feat,
+            key_padding_mask=key_padding_mask,
+        )
 
         # --- Prediction ---
         binary_logits, type_logits, severity_logits = self.heads(fused)
@@ -308,7 +334,7 @@ class DarkPatternDetector(nn.Module):
             "total": total,
             "trainable": trainable,
             "frozen": frozen,
-            "trainable_pct": round(trainable / total * 100, 1),
+            "trainable_pct": round(trainable / max(total, 1) * 100, 1),
         }
 
     def get_param_groups(self, lr_backbone=1e-5, lr_new=1e-4):
@@ -370,7 +396,7 @@ class MultiTaskLoss(nn.Module):
             reduction="none",
         )
         loss_severity_unreduced = F.cross_entropy(
-            severity_logits, severity_labels.squeeze(1),
+            severity_logits, severity_labels.view(-1),
             weight=self.severity_weights,
             reduction="none",
         )
@@ -387,15 +413,17 @@ class MultiTaskLoss(nn.Module):
         loss_types = loss_types_unreduced.mean()
         loss_severity = loss_severity_unreduced.mean()
 
-        # Uncertainty-based weighting
+        # Uncertainty-based weighting (Kendall et al., 2018)
+        # L_total = 0.5 * (1/sigma^2) * L_task + 0.5 * log(sigma^2)
+        # With log_var = log(sigma^2): L_total = 0.5 * exp(-log_var) * L_task + 0.5 * log_var
         precision_binary = torch.exp(-self.log_var_binary)
         precision_types = torch.exp(-self.log_var_types)
         precision_severity = torch.exp(-self.log_var_severity)
 
         total_loss = (
-            precision_binary * loss_binary + self.log_var_binary +
-            precision_types * loss_types + self.log_var_types +
-            precision_severity * loss_severity + self.log_var_severity
+            0.5 * precision_binary * loss_binary + 0.5 * self.log_var_binary +
+            0.5 * precision_types * loss_types + 0.5 * self.log_var_types +
+            0.5 * precision_severity * loss_severity + 0.5 * self.log_var_severity
         )
 
         loss_dict = {

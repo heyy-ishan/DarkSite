@@ -14,10 +14,11 @@
 #
 # Features:
 #   - Domain-level train/val/test split (no data leakage)
-#   - WeightedRandomSampler (own data 3x weight over Yada)
+#   - WeightedRandomSampler (own data 2x weight over Yada)
 #   - Confidence-weighted training support
 #   - Train-time image augmentation
 
+import copy
 import csv
 import json
 import logging
@@ -68,9 +69,10 @@ SEVERITY_TO_IDX = {s: i for i, s in enumerate(SEVERITY_LEVELS)}
 NUM_STRUCTURAL_FEATURES = 24
 
 # Training augmentation: conservative transforms for web screenshots
+# No horizontal flip — flipped web screenshots reverse text direction and UI layout,
+# creating unnatural images that don't resemble real websites
 IMAGE_TRANSFORM_TRAIN = transforms.Compose([
     transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),
-    transforms.RandomHorizontalFlip(0.5),
     transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.1),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
@@ -251,9 +253,15 @@ def extract_structural_features(metadata):
         avg_pos = sum(b.get("area", 0) for b in pos_btns) / len(pos_btns)
         avg_neg = sum(b.get("area", 0) for b in neg_btns) / len(neg_btns)
         area_ratio = avg_pos / max(avg_neg, 1.0)
+        # Only signal asymmetry when ratio is extreme enough to be manipulative
+        # Below 2.0 is normal primary/secondary button hierarchy
+        if area_ratio < 2.0:
+            area_ratio = 0.0
+        else:
+            area_ratio = min(area_ratio, 5.0)
     else:
-        area_ratio = 1.0
-    features.append(min(area_ratio, 10.0))
+        area_ratio = 0.0
+    features.append(area_ratio)
 
     # Page metadata (2)
     page_meta = ext.get("metadata", {}) or {}
@@ -445,21 +453,21 @@ class YadaDataset(Dataset):
                 header = next(reader, None)  # skip header
 
                 for row in reader:
-                    if len(row) < 2:
+                    if len(row) < 3:  # Need at least page_id, text, label
                         continue
 
-                    text = row[0].strip()
+                    text = row[1].strip()  # Text is in column 2 (index 1)
                     if not text:
                         continue
 
-                    # Label: 1 = dark pattern, 0 = clean
+                    # Label: 1 = dark pattern, 0 = clean (column 3, index 2)
                     try:
-                        is_dark = int(row[1]) == 1
+                        is_dark = int(row[2]) == 1
                     except (ValueError, IndexError):
                         continue
 
-                    # Type (if available, column 3+)
-                    dp_type_raw = row[2].strip() if len(row) > 2 else ""
+                    # Type (if available, column 4, index 3)
+                    dp_type_raw = row[3].strip() if len(row) > 3 else ""
                     dp_type = DARK_PATTERN_TYPE_MAP.get(dp_type_raw,
                               DARK_PATTERN_TYPE_MAP.get(dp_type_raw.lower(), ""))
 
@@ -589,7 +597,7 @@ class CombinedDarkPatternDataset(Dataset):
         """Return per-sample weights for WeightedRandomSampler."""
         weights = []
         for source, _ in self._index_map:
-            weights.append(3.0 if source == "own" else 1.0)
+            weights.append(2.0 if source == "own" else 1.0)
         return weights
 
 
@@ -619,14 +627,16 @@ def create_dataloaders(tokenizer, batch_size=8, num_workers=2,
                       "type_names": DARK_PATTERN_TYPES, "severity_names": SEVERITY_LEVELS}
         return None, None, None, empty_info
 
-    # Domain-level split
+    # Domain-level split (indices valid against own_full.samples)
     train_idx, val_idx, test_idx = domain_level_split(own_full.samples, seed=seed)
 
-    # Train: own data with augmentation + Yada
-    own_train = OwnScrapedDataset(
-        data_dir=data_dir, label_dir=label_dir,
-        tokenizer=tokenizer, image_transform=IMAGE_TRANSFORM_TRAIN,
-    )
+    # Train: shallow-copy own_full to share the SAME samples list (indices aligned),
+    # then swap image_transform for augmentation. Avoids re-scanning the filesystem
+    # which could yield a different sample order and silently leak val/test into train.
+    own_train = copy.copy(own_full)
+    own_train.image_transform = IMAGE_TRANSFORM_TRAIN
+    assert own_train.samples is own_full.samples, "train/full must share samples list"
+
     train_dataset = CombinedDarkPatternDataset(
         tokenizer=tokenizer, split="train", seed=seed,
         use_yada=use_yada,
@@ -647,7 +657,10 @@ def create_dataloaders(tokenizer, batch_size=8, num_workers=2,
         _own_indices=test_idx, _own_dataset=own_full,
     )
 
-    # Weighted sampler for training (own data 3x, Yada 1x)
+    # Weighted sampler for training (own data 2x, Yada 1x).
+    # num_samples = len(train_dataset) fixes per-epoch step count. If gradient
+    # accumulation or schedulers that depend on total optimizer steps are added,
+    # scale this accordingly (effective_steps = num_samples / batch_size / accum).
     train_weights = train_dataset.get_source_weights()
     train_sampler = WeightedRandomSampler(
         weights=train_weights,
@@ -655,17 +668,24 @@ def create_dataloaders(tokenizer, batch_size=8, num_workers=2,
         replacement=True,
     )
 
+    # persistent_workers keeps worker pool alive across epochs, avoiding repeated
+    # tokenizer import overhead. Only valid when num_workers > 0.
+    persistent = num_workers > 0
+
     train_loader = DataLoader(
         train_dataset, batch_size=batch_size, sampler=train_sampler,
         num_workers=num_workers, pin_memory=True, drop_last=True,
+        persistent_workers=persistent,
     )
     val_loader = DataLoader(
         val_dataset, batch_size=batch_size, shuffle=False,
         num_workers=num_workers, pin_memory=True,
+        persistent_workers=persistent,
     )
     test_loader = DataLoader(
         test_dataset, batch_size=batch_size, shuffle=False,
         num_workers=num_workers, pin_memory=True,
+        persistent_workers=persistent,
     )
 
     dataset_info = {

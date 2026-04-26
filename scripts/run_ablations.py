@@ -35,7 +35,11 @@ ABLATION_VARIANTS = {
 
 def run_single(variant, seed, args):
     """Run a single training job as a subprocess."""
-    output_dir = Path(args.output_dir) / variant
+    # Write each (variant, seed) run into its own subdir so collect_results
+    # can find test_results.json at output_dir/variant/seed_{seed}/test_results.json.
+    output_dir = Path(args.output_dir) / variant / f"seed_{seed}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    log_path = output_dir / "run.log"
 
     cmd = [
         sys.executable, str(Path(__file__).parent / "train.py"),
@@ -64,15 +68,37 @@ def run_single(variant, seed, args):
     print(f"\n{'='*60}")
     print(f"Running: {variant} (seed={seed})")
     print(f"Command: {' '.join(cmd)}")
+    print(f"Log:     {log_path}")
     print(f"{'='*60}\n")
 
-    result = subprocess.run(cmd)
-    return result.returncode == 0
+    # Capture stdout+stderr to a per-run log so failures are never invisible.
+    # Enforce a hard timeout so a hung GPU/NFS cannot block the whole sweep.
+    try:
+        with open(log_path, "w") as logf:
+            result = subprocess.run(
+                cmd,
+                stdout=logf, stderr=subprocess.STDOUT,
+                timeout=args.run_timeout,
+                check=False,
+            )
+        if result.returncode != 0:
+            print(f"  [FAIL] exit={result.returncode}. Tail of {log_path}:")
+            try:
+                tail = log_path.read_text().splitlines()[-20:]
+                for line in tail:
+                    print(f"    {line}")
+            except OSError:
+                pass
+        return result.returncode == 0
+    except subprocess.TimeoutExpired:
+        print(f"  [TIMEOUT] run exceeded {args.run_timeout}s — killed")
+        return False
 
 
 def collect_results(output_dir, variants, seeds):
     """Collect test results from all completed runs."""
     results = {}
+    total_missing = 0
     for variant in variants:
         results[variant] = {"seeds": {}, "metrics": {}}
         for seed in seeds:
@@ -81,6 +107,9 @@ def collect_results(output_dir, variants, seeds):
                 with open(test_file) as f:
                     data = json.load(f)
                 results[variant]["seeds"][str(seed)] = data.get("test_metrics", {})
+            else:
+                print(f"  [missing] {test_file}")
+                total_missing += 1
 
         # Compute mean +/- std across seeds
         if results[variant]["seeds"]:
@@ -94,6 +123,10 @@ def collect_results(output_dir, variants, seeds):
                         "std": float(np.std(vals)),
                         "values": vals,
                     }
+
+    if total_missing:
+        print(f"WARNING: {total_missing} test_results.json files missing "
+              f"across {len(variants)} variants × {len(seeds)} seeds.")
 
     return results
 
@@ -152,6 +185,8 @@ def main():
     parser.add_argument("--label-dir", type=str, default=None)
     parser.add_argument("--collect-only", action="store_true",
                         help="Skip training, just collect results")
+    parser.add_argument("--run-timeout", type=int, default=60 * 60 * 8,
+                        help="Hard per-run timeout in seconds (default: 8h)")
 
     args = parser.parse_args()
 

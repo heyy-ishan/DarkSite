@@ -47,3 +47,31 @@ htmlcov/
 
 #external datasets
 data/external/
+
+models/
+models_hpc/
+*.pt
+*.ckpt
+*.onnx
+
+# Large binaries
+DarkSite_Project_Documentation.pdf
+
+# HPC setup / diagnostic scripts (machine-specific)
+find_*.sh
+find_*.txt
+diagnose*.sh
+update_account.sh
+torch_cluster_commands.txt
+test_data_loading.py
+check_cluster_config.sh
+check_gpus.sh
+clean_and_setup.sh
+setup_hpc*.sh
+setup_scratch.sh
+
+# Internal review docs
+CODE_REVIEW_REPORT.md
+
+# Internal planning / research notes (not for public repo)
+docs/

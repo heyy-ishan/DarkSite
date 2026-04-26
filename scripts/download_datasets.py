@@ -35,15 +35,20 @@ def setup_logging():
 
 
 def run_command(cmd, cwd=None):
-    """Run a shell command and return success status."""
+    """Run a command (list form) and return success status.
+
+    cmd MUST be a list of args; shell=True is not used, preventing injection.
+    """
+    if not isinstance(cmd, (list, tuple)):
+        raise TypeError(f"run_command requires list/tuple, got {type(cmd).__name__}")
     try:
-        result = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True)
+        result = subprocess.run(cmd, shell=False, cwd=cwd, capture_output=True, text=True)
         if result.returncode != 0:
             logger.error(f"Command failed: {cmd}\n{result.stderr}")
             return False
         return True
-    except Exception as e:
-        logger.error(f"Error running command: {e}")
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.error(f"Error running command {cmd}: {e}")
         return False
 
 
@@ -64,7 +69,8 @@ def download_yada():
     logger.info("Downloading Yada et al. dataset...")
 
     success = run_command(
-        "git clone --depth 1 https://github.com/yamanalab/ec-darkpattern.git temp_yada",
+        ["git", "clone", "--depth", "1",
+         "https://github.com/yamanalab/ec-darkpattern.git", "temp_yada"],
         cwd=str(EXTERNAL_DIR),
     )
 

@@ -34,7 +34,8 @@ PATHS = {
     "labels_summary": PROJECT_ROOT / "data" / "labeled" / "summary.json",
 }
 
-PATHS["labels"].mkdir(parents=True, exist_ok=True)
+# NOTE: labels directory is created lazily in LabelingPipeline.__init__
+# (avoids module-import side effect when labeler.py is imported by tools/tests).
 
 # Rate limiting for Gemini free tier (post-Dec 2025 limits)
 # Flash-Lite: 15 RPM, 1000 RPD — enough for all ~945 URLs in 1 day
@@ -63,7 +64,7 @@ KIMI_CONFIG = {
 # OpenAI — vision supported
 # $5 free credits on signup (no credit card)
 OPENAI_CONFIG = {
-    "model": "gpt-5-mini",
+    "model": "gpt-4o-mini",
     "base_url": "https://api.openai.com/v1",
     "rpm_limit": 500,
     "delay_between_calls": 1,
@@ -411,7 +412,7 @@ def build_prompt(sample_data):
         if stage.get("exit_popups"):
             for popup in stage["exit_popups"][:2]:
                 session_info.append(f"Exit popup: has_discount={popup.get('hasDiscount')}, "
-                                    f"text={popup.get('text', '')[:80]}")
+                                    f"text={(popup.get('text') or '')[:80]}")
 
     if session_info:
         sections.append("SESSION SIMULATION (browse → cart → checkout → abandon):\n" +
@@ -594,6 +595,7 @@ class GeminiLabeler:
                 "Then run: export GEMINI_API_KEY='your-key-here'"
             )
 
+        import threading
         genai.configure(api_key=api_key)
         model_name = GEMINI_CONFIG["model_flash"] if use_flash else GEMINI_CONFIG["model"]
         rpd = 250 if use_flash else GEMINI_CONFIG["rpd_limit"]
@@ -603,17 +605,20 @@ class GeminiLabeler:
         self.rpd_limit = rpd
         self.day_start = datetime.now().date()
         self.model_name = model_name
+        # Guard calls_today/day_start read-modify-write against parallel label calls
+        self._counter_lock = threading.Lock()
         logger.info(f"Gemini initialized (model: {model_name}, RPD limit: {rpd})")
 
     def _check_daily_limit(self):
-        today = datetime.now().date()
-        if today != self.day_start:
-            self.calls_today = 0
-            self.day_start = today
-        if self.calls_today >= self.rpd_limit:
-            logger.warning(f"Gemini daily limit reached ({self.calls_today}/{self.rpd_limit})")
-            return False
-        return True
+        with self._counter_lock:
+            today = datetime.now().date()
+            if today != self.day_start:
+                self.calls_today = 0
+                self.day_start = today
+            if self.calls_today >= self.rpd_limit:
+                logger.warning(f"Gemini daily limit reached ({self.calls_today}/{self.rpd_limit})")
+                return False
+            return True
 
     def label(self, sample_data):
         
@@ -661,7 +666,8 @@ class GeminiLabeler:
                     ),
                 )
 
-                self.calls_today += 1
+                with self._counter_lock:
+                    self.calls_today += 1
                 text = response.text.strip()
 
                 # Clean markdown fences
@@ -758,6 +764,7 @@ class OllamaLabeler:
             "options": {"temperature": 0.1, "num_predict": 2048},
         }).encode("utf-8")
 
+        text = ""  # init before loop so except blocks can safely reference it
         for attempt in range(3):
             try:
                 req = urllib.request.Request(
@@ -875,6 +882,7 @@ class NvidiaKimiLabeler:
             },
         }).encode("utf-8")
 
+        text = ""  # init before loop so except blocks can safely reference it
         for attempt in range(KIMI_CONFIG["max_retries"]):
             try:
                 req = urllib.request.Request(
@@ -1014,6 +1022,7 @@ class OpenAILabeler:
             "max_completion_tokens": 4096,
         }).encode("utf-8")
 
+        text = ""  # init before loop so except blocks can safely reference it
         for attempt in range(OPENAI_CONFIG["max_retries"]):
             try:
                 req = urllib.request.Request(
@@ -1289,8 +1298,12 @@ def compute_cohens_kappa(binary_pairs):
     b_neg = 1 - b_pos
     p_e = (a_pos * b_pos) + (a_neg * b_neg)
 
-    if p_e == 1.0:
-        return 1.0  # Both annotators gave identical labels for everything
+    if p_e >= 1.0 - 1e-12:
+        # Degenerate: both annotators produced the same constant label for every
+        # sample. Kappa is mathematically undefined (0/0); returning 1.0 would
+        # falsely inflate reported agreement. Return NaN so downstream reporting
+        # can surface the degenerate case explicitly.
+        return float("nan")
 
     kappa = (p_o - p_e) / (1 - p_e)
     return round(kappa, 4)
@@ -1328,6 +1341,9 @@ class LabelingPipeline:
 
     def __init__(self, provider="openai", fallback=True, use_flash=False,
                  ensemble=False):
+        # Lazy mkdir: only runs when pipeline is actually instantiated
+        PATHS["labels"].mkdir(parents=True, exist_ok=True)
+
         self.ensemble = ensemble
         self.primary = None
         self.secondary = None
@@ -1378,8 +1394,8 @@ class LabelingPipeline:
                 try:
                     self.fallback_provider = OllamaLabeler()
                     logger.info("Ollama emergency fallback ready")
-                except Exception:
-                    logger.info("Ollama not available (OK — both cloud providers active)")
+                except (ValueError, RuntimeError, ImportError, OSError) as e:
+                    logger.info(f"Ollama not available (OK — both cloud providers active): {e}")
 
             if self.ensemble:
                 primary_name = self._get_provider_name(self.primary) if self.primary else "?"
@@ -1432,7 +1448,8 @@ class LabelingPipeline:
                             self.fallback_provider = FallbackClass()
                             logger.info(f"{fb_name.capitalize()} fallback ready")
                             break
-                        except Exception:
+                        except (ValueError, RuntimeError, ImportError, OSError) as e:
+                            logger.debug(f"{fb_name} fallback init failed: {e}")
                             continue
                 elif self.provider_name == "gemini":
                     for FallbackClass, fb_name in [(NvidiaKimiLabeler, "kimi"), (OllamaLabeler, "ollama")]:
@@ -1440,14 +1457,15 @@ class LabelingPipeline:
                             self.fallback_provider = FallbackClass()
                             logger.info(f"{fb_name.capitalize()} fallback ready")
                             break
-                        except Exception:
+                        except (ValueError, RuntimeError, ImportError, OSError) as e:
+                            logger.debug(f"{fb_name} fallback init failed: {e}")
                             continue
                 elif self.provider_name == "kimi":
                     try:
                         self.fallback_provider = OllamaLabeler()
                         logger.info("Ollama fallback ready")
-                    except Exception:
-                        logger.info("Ollama fallback not available (OK)")
+                    except (ValueError, RuntimeError, ImportError, OSError) as e:
+                        logger.info(f"Ollama fallback not available (OK): {e}")
 
         self.stats = {
             "total": 0, "labeled": 0, "skipped": 0, "failed": 0,
@@ -1491,7 +1509,8 @@ class LabelingPipeline:
                         meta = json.load(f)
                     if meta.get("category") != category_filter:
                         continue
-                except Exception:
+                except (OSError, json.JSONDecodeError) as e:
+                    logger.warning(f"Skipping {meta_file.name}: {e}")
                     continue
             ids.append(page_id)
         return ids
@@ -1602,33 +1621,17 @@ class LabelingPipeline:
 
             return merged, f"ensemble:{primary_name}+kimi", ensemble_data
 
-        # Case 2: Only primary succeeded
+        # Case 2: Only primary succeeded — SKIP (will retry later with both models)
         if label_primary:
             ens["primary_only_succeeded"] = ens.get("primary_only_succeeded", 0) + 1
-            label_primary["confidence"] = min(label_primary.get("confidence", 0.5), 0.6)
-            logger.info(f"  Ensemble: Kimi failed, using {primary_name} only (confidence capped at 0.6)")
-            ensemble_data = {
-                "mode": "single_fallback",
-                "primary_label": label_primary,
-                "primary_provider": primary_name,
-                "kimi_label": None,
-                "agreement": None,
-            }
-            return label_primary, f"{primary_name}-only", ensemble_data
+            logger.info(f"  Ensemble: Kimi failed, SKIPPING (will retry later)")
+            return None, None, None
 
-        # Case 3: Only Kimi succeeded
+        # Case 3: Only Kimi succeeded — SKIP (will retry later with both models)
         if label_kimi:
             ens["kimi_only_succeeded"] = ens.get("kimi_only_succeeded", 0) + 1
-            label_kimi["confidence"] = min(label_kimi.get("confidence", 0.5), 0.6)
-            logger.info(f"  Ensemble: {primary_name} failed, using Kimi only (confidence capped at 0.6)")
-            ensemble_data = {
-                "mode": "single_fallback",
-                "primary_label": None,
-                "primary_provider": primary_name,
-                "kimi_label": label_kimi,
-                "agreement": None,
-            }
-            return label_kimi, "kimi-only", ensemble_data
+            logger.info(f"  Ensemble: {primary_name} failed, SKIPPING (will retry later)")
+            return None, None, None
 
         # Case 4: Both failed — try Ollama emergency fallback
         if self.fallback_provider:

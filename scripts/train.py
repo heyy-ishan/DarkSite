@@ -64,26 +64,46 @@ def set_seed(seed):
     logger.info(f"Random seed set to {seed}")
 
 
-def compute_class_weights(train_loader):
+def compute_class_weights(train_dataset):
     """
-    Scan training data to compute class weights for imbalanced labels.
+    Compute class weights by reading only label files (not images/text/transforms).
+    Deterministic — avoids stochastic counting from WeightedRandomSampler.
 
     Returns:
         type_pos_weights: Tensor [11] — pos_weight for BCE on type head
         severity_weights: Tensor [4]  — class weight for CE on severity head
     """
+    from dataset import extract_labels_from_labeler
+
     type_counts = torch.zeros(NUM_TYPES)
     severity_counts = torch.zeros(NUM_SEVERITY)
     total = 0
 
-    for batch in train_loader:
-        type_labels = batch["type_labels"]
-        severity_labels = batch["severity_label"]
-
-        type_counts += type_labels.sum(dim=0)
-        for s in severity_labels.squeeze(1):
-            severity_counts[s.item()] += 1
-        total += type_labels.size(0)
+    skipped = 0
+    for source, source_idx in train_dataset._index_map:
+        if source == "own":
+            # Read only the label JSON — skip image/text/structural loading
+            sample_info = train_dataset.own_dataset.samples[source_idx]
+            try:
+                with open(sample_info["label"]) as f:
+                    label_data = json.load(f)
+                labels = extract_labels_from_labeler(label_data)
+                type_counts += torch.tensor(labels["types"])
+                severity_counts[labels["severity"]] += 1
+            except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
+                # Skip corrupt/missing labels — do NOT silently inflate severity class 0.
+                logger.warning(
+                    f"Skipping corrupt label in class-weight count: "
+                    f"{sample_info.get('label')} ({type(e).__name__}: {e})"
+                )
+                skipped += 1
+                continue
+        else:
+            # Yada: labels already in memory, no I/O needed
+            yada_sample = train_dataset.yada_dataset.samples[source_idx]
+            type_counts += torch.tensor(yada_sample["types"])
+            severity_counts[yada_sample["severity"]] += 1
+        total += 1
 
     # pos_weight: num_negative / num_positive, capped at 10
     type_pos_weights = torch.clamp((total - type_counts) / (type_counts + 1), max=10.0)
@@ -91,6 +111,7 @@ def compute_class_weights(train_loader):
     # severity weight: total / (num_classes * count)
     severity_weights = total / (NUM_SEVERITY * (severity_counts + 1))
 
+    logger.info(f"Class-weight computation: counted={total}, skipped_corrupt={skipped}")
     logger.info(f"Type pos_weights: {dict(zip(DARK_PATTERN_TYPES, [f'{w:.2f}' for w in type_pos_weights.tolist()]))}")
     logger.info(f"Severity weights: {dict(zip(SEVERITY_LEVELS, [f'{w:.2f}' for w in severity_weights.tolist()]))}")
 
@@ -126,15 +147,19 @@ def compute_metrics(all_preds, all_labels, threshold=0.5, attention_weights=None
         max(metrics["binary_precision"] + metrics["binary_recall"], 1e-8)
     )
 
-    # ROC-AUC
+    # ROC-AUC (requires sklearn + at least one sample of each class)
     try:
         from sklearn.metrics import roc_auc_score
+    except ImportError:
+        logger.warning("sklearn not installed — skipping ROC-AUC metric")
+    else:
         if len(set(binary_true.squeeze().tolist())) > 1:
-            metrics["binary_roc_auc"] = roc_auc_score(
-                binary_true.squeeze().numpy(), binary_probs.squeeze().numpy()
-            )
-    except Exception:
-        pass
+            try:
+                metrics["binary_roc_auc"] = roc_auc_score(
+                    binary_true.squeeze().numpy(), binary_probs.squeeze().numpy()
+                )
+            except ValueError as e:
+                logger.debug(f"ROC-AUC skipped: {e}")
 
     # --- Multi-label metrics (per-type P/R/F1) ---
     type_probs = torch.sigmoid(all_preds["types"]).cpu()
@@ -275,9 +300,15 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch,
 # ============================================================================
 
 @torch.no_grad()
-def validate(model, val_loader, criterion, device):
-    """Run validation and compute metrics including attention analysis."""
+def validate(model, val_loader, criterion, device, use_amp=None):
+    """Run validation and compute metrics including attention analysis.
+
+    use_amp: None = auto (enable on CUDA); True/False = force.
+    """
     model.eval()
+
+    if use_amp is None:
+        use_amp = (device.type == "cuda")
 
     total_loss = 0.0
     num_batches = 0
@@ -294,16 +325,16 @@ def validate(model, val_loader, criterion, device):
         binary_label = batch["binary_label"].to(device)
         type_labels = batch["type_labels"].to(device)
         severity_label = batch["severity_label"].to(device)
-        confidence = batch["confidence"].to(device)
 
-        outputs = model(image, input_ids, attention_mask, structural)
+        with torch.amp.autocast(device_type=device.type, enabled=use_amp):
+            outputs = model(image, input_ids, attention_mask, structural)
 
-        loss, loss_dict = criterion(
-            outputs["binary_logits"], outputs["type_logits"],
-            outputs["severity_logits"],
-            binary_label, type_labels, severity_label,
-            sample_weights=confidence,
-        )
+            # No confidence weighting during validation — unbiased evaluation
+            loss, loss_dict = criterion(
+                outputs["binary_logits"], outputs["type_logits"],
+                outputs["severity_logits"],
+                binary_label, type_labels, severity_label,
+            )
 
         total_loss += loss_dict["total"]
         num_batches += 1
@@ -350,7 +381,9 @@ def save_checkpoint(model, optimizer, scheduler, criterion, epoch, metrics, path
 
 
 def load_checkpoint(path, model, optimizer=None, scheduler=None, criterion=None):
-    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    # weights_only=True blocks arbitrary code execution via crafted checkpoints.
+    # Our saved state contains only tensors + plain python containers (safe).
+    checkpoint = torch.load(path, map_location="cpu", weights_only=True)
     model.load_state_dict(checkpoint["model_state_dict"])
     if optimizer and "optimizer_state_dict" in checkpoint:
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
@@ -401,9 +434,9 @@ def train(args):
         logger.error("No training data found. Exiting.")
         sys.exit(1)
 
-    # --- Class weights ---
+    # --- Class weights (computed from dataset directly, not stochastic sampler) ---
     logger.info("Computing class weights from training data...")
-    type_pos_weights, severity_weights = compute_class_weights(train_loader)
+    type_pos_weights, severity_weights = compute_class_weights(train_loader.dataset)
     type_pos_weights = type_pos_weights.to(device)
     severity_weights = severity_weights.to(device)
 
@@ -486,6 +519,7 @@ def train(args):
 
     best_val_f1 = 0.0
     patience_counter = 0
+    last_epoch = start_epoch
     val_metrics = {}
 
     # --- Training loop ---
@@ -505,6 +539,10 @@ def train(args):
         val_loss, val_metrics = validate(model, val_loader, criterion, device)
 
         scheduler.step()
+        # Convention: checkpoint["epoch"] = number of COMPLETED epochs (1-indexed count).
+        # On resume, start_epoch = checkpoint["epoch"] → loop restarts at next index.
+        completed_epochs = epoch + 1
+        last_epoch = completed_epochs
 
         epoch_time = time.time() - epoch_start
 
@@ -550,7 +588,7 @@ def train(args):
             best_val_f1 = current_f1
             patience_counter = 0
             save_checkpoint(
-                model, optimizer, scheduler, criterion, epoch,
+                model, optimizer, scheduler, criterion, completed_epochs,
                 val_metrics, output_dir / "best_model.pt"
             )
             logger.info(f"  New best! Binary F1: {best_val_f1:.4f}")
@@ -561,16 +599,16 @@ def train(args):
                 logger.info(f"  Early stopping at epoch {epoch + 1}")
                 break
 
-        if (epoch + 1) % args.save_every == 0:
+        if completed_epochs % args.save_every == 0:
             save_checkpoint(
-                model, optimizer, scheduler, criterion, epoch,
-                val_metrics, output_dir / f"checkpoint_epoch{epoch + 1}.pt"
+                model, optimizer, scheduler, criterion, completed_epochs,
+                val_metrics, output_dir / f"checkpoint_epoch{completed_epochs}.pt"
             )
 
     # --- Final save ---
     if val_metrics:
         save_checkpoint(
-            model, optimizer, scheduler, criterion, args.epochs - 1,
+            model, optimizer, scheduler, criterion, last_epoch,
             val_metrics, output_dir / "final_model.pt"
         )
 

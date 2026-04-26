@@ -102,18 +102,13 @@ def directory_setup(base_path = "data/raw"):
 
 
 #code for setting up the log files:
-def setup_log(log_file = str(Path(__file__).resolve().parent.parent / "data" / "logs" / "scraping.log")):
+def setup_log(log_file=None):
+    """Configure file + console logging. Path resolved at call time, not import time."""
+    if log_file is None:
+        log_file = str(Path(__file__).resolve().parent.parent / "data" / "logs" / "scraping.log")
 
-    # Configuring the logging to botht the files and the console
-
-    # the use of log file is to:
-    # -> Track which URLs were scraped successfully
-    # -> Which URLs failed and the reason behind it
-    # ->The overall progress
-
-
-    #creating the log directory
-    Path(log_file).parent.mkdir(parents = True, exist_ok = True)
+    # creating the log directory
+    Path(log_file).parent.mkdir(parents=True, exist_ok=True)
 
     #defining the logging format:
     log_format = logging.Formatter('%(asctime)s | %(levelname)s | %(message)s')
@@ -190,7 +185,9 @@ def domain_name(url):
 
 
 #loading the completed URLs from the metadata
-def load_complete_urls(metadata_path = str(PROJECT_ROOT / "data" / "raw" / "metadata" / "scraped_urls.txt")):
+def load_complete_urls(metadata_path=None):
+    if metadata_path is None:
+        metadata_path = str(PROJECT_ROOT / "data" / "raw" / "metadata" / "scraped_urls.txt")
 
     # Gets the list of already scraped URLs
 
@@ -212,10 +209,10 @@ def load_complete_urls(metadata_path = str(PROJECT_ROOT / "data" / "raw" / "meta
     return completed
 
 #saving the successfully scraped website to the metadata
-def save_completed_website(url, metadata_path = str(PROJECT_ROOT / "data" / "raw" / "metadata" / "scraped_urls.txt")):
-    """
-    Appends the URL to the metadata
-    """
+def save_completed_website(url, metadata_path=None):
+    """Appends the URL to the metadata."""
+    if metadata_path is None:
+        metadata_path = str(PROJECT_ROOT / "data" / "raw" / "metadata" / "scraped_urls.txt")
     with open(metadata_path, 'a') as f:
         f.write(url + '\n')
      
